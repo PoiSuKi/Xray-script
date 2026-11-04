@@ -74,6 +74,7 @@
 6. v2026.11.05-r3 uses the Mihomo/Clash transport name `tcp` in client output and adds `support-x25519mlkem768=true` to Reality share links for Xray v26.9.8+ REALITY handshakes.
 7. v2026.11.05-r4 adds menu option `99. Update Script` and a management action that changes only the REALITY domain while preserving all other settings.
 8. v2026.11.05-r5 adds `88. One-click BBR Install`, using the kernel `tcp_bbr` module, `fq` qdisc, and persistent `sysctl.d`/`modules-load.d` configuration.
+9. v2026.11.05-r6 skips `nginx.service` state checks when the script-managed Nginx is not installed, removing the systemd `Failed to get unit file state for nginx.service` message from Xray-only configurations.
 
 ## Share Links
 

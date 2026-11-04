@@ -73,6 +73,7 @@
 6. v2026.11.05-r3 版本将客户端传输名称统一为 Mihomo/Clash 使用的 `tcp`，并为 Reality 分享链接添加 `support-x25519mlkem768=true`，以兼容 Xray v26.9.8+ 的 REALITY 握手要求。
 7. v2026.11.05-r4 版本在主菜单新增 `99. 更新脚本`，并新增仅修改 REALITY 域名、保留其余设置的管理功能。
 8. v2026.11.05-r5 版本新增 `88. 一键安装 BBR`，通过内核 `tcp_bbr` 模块、`fq` 队列和 `sysctl.d`/`modules-load.d` 实现即时启用与开机持久化。
+9. v2026.11.05-r6 版本修复纯 Xray 配置在未安装 Nginx 时仍检查 `nginx.service`，导致 systemd 输出 `Failed to get unit file state for nginx.service` 的问题。
 
 ## 分享链接
 

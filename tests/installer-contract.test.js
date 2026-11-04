@@ -160,3 +160,24 @@ test("main menu enables BBR as option 88 with persistent settings", () => {
   assert.ok(zh.menu.index.option88);
   assert.ok(en.menu.index.option88);
 });
+
+test("nginx lifecycle operations skip an uninstalled managed service", () => {
+  const handler = read("core/handler.sh");
+
+  assert.match(
+    handler,
+    /function nginx_service_is_managed\(\)[\s\S]{0,160}MANAGED_NGINX_BINARY[\s\S]{0,120}\/etc\/systemd\/system\/nginx\.service/,
+  );
+  assert.match(
+    handler,
+    /function handler_nginx_restart\(\)[\s\S]{0,120}nginx_service_is_managed \|\| return 0/,
+  );
+  assert.match(
+    handler,
+    /function handler_nginx_start\(\)[\s\S]{0,120}nginx_service_is_managed \|\| return 0/,
+  );
+  assert.match(
+    handler,
+    /function handler_nginx_stop\(\)[\s\S]{0,120}nginx_service_is_managed \|\| return 0/,
+  );
+});

@@ -515,7 +515,12 @@ function sync_custom_sites_config() {
     done < <(echo "${source_config}" | jq -r '.nginx.custom_sites // [] | .[] | [.domain, .scheme, .host, (.port | tostring)] | @tsv')
 }
 
+function nginx_service_is_managed() {
+    [[ -x "${MANAGED_NGINX_BINARY}" && -f "/etc/systemd/system/nginx.service" ]]
+}
+
 function test_and_reload_nginx() {
+    nginx_service_is_managed || return 0
     ensure_nginx_support_files || return 1
     nginx -t || return 1
     if systemctl -q is-active nginx; then
@@ -1910,6 +1915,7 @@ function handler_nginx_cron() {
 # 返回值: 无 (通过 systemctl 命令执行操作)
 # =============================================================================
 function handler_nginx_start() {
+    nginx_service_is_managed || return 0
     ensure_nginx_support_files || return 1
     # 检查 nginx 服务是否活跃，如果不活跃则启动
     systemctl -q is-active nginx || systemctl -q start nginx
@@ -1928,6 +1934,7 @@ function handler_nginx_start() {
 # 返回值: 无 (通过 systemctl 命令执行操作)
 # =============================================================================
 function handler_nginx_stop() {
+    nginx_service_is_managed || return 0
     # 检查 nginx 服务是否活跃，如果活跃则停止
     systemctl -q is-active nginx && systemctl -q stop nginx
     # 检查 nginx 服务是否已启用，如果启用则禁用
@@ -1945,6 +1952,7 @@ function handler_nginx_stop() {
 # 返回值: 无 (通过 systemctl 命令执行操作)
 # =============================================================================
 function handler_nginx_restart() {
+    nginx_service_is_managed || return 0
     ensure_nginx_support_files || return 1
     # 检查 nginx 服务是否活跃，如果活跃则重启，否则启动
     systemctl -q is-active nginx && systemctl -q restart nginx || systemctl -q start nginx
