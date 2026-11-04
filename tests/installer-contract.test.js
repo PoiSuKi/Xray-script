@@ -50,3 +50,40 @@ test("fork release has a distinct version", () => {
 
   assert.notEqual(config.version, "v2026.03.17");
 });
+
+test("nginx installs only the managed source build and resolves mainline", () => {
+  const handler = read("core/handler.sh");
+  const nginx = read("service/nginx.sh");
+
+  assert.match(handler, /MANAGED_NGINX_BINARY="\/usr\/local\/nginx\/sbin\/nginx"/);
+  assert.match(handler, /\[\[ ! -x "\$\{MANAGED_NGINX_BINARY\}" \]\]/);
+  assert.match(nginx, /get_latest_nginx_version/);
+  assert.match(nginx, /https:\/\/nginx\.org\/en\/download\.html/);
+  assert.doesNotMatch(nginx, /api\.github\.com\/repos\/nginx\/nginx\/tags/);
+  assert.match(nginx, /_version_gt/);
+});
+
+test("all Xray templates disable inbound sniffing by default", () => {
+  const templateDir = path.join(root, "config", "xray");
+  const templates = fs
+    .readdirSync(templateDir)
+    .filter((file) => file.endsWith(".json"));
+
+  for (const file of templates) {
+    const config = JSON.parse(read(path.join("config", "xray", file)));
+    for (const inbound of config.inbounds) {
+      if (inbound.sniffing) {
+        assert.equal(
+          inbound.sniffing.enabled,
+          false,
+          `${file}:${inbound.tag} must keep sniffing disabled`,
+        );
+      }
+    }
+  }
+
+  assert.match(
+    read("core/handler.sh"),
+    /select\(\.sniffing != null\) \| \.sniffing\.enabled\) = false/,
+  );
+});

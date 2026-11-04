@@ -277,6 +277,22 @@ function _version_ge() {
     test "$(echo "$@" | tr " " "\n" | sort -rV | head -n 1)" == "$1"
 }
 
+function _version_gt() {
+    _version_ge "$1" "$2" && [[ "$1" != "$2" ]]
+}
+
+function get_latest_nginx_version() {
+    local version
+    version="$(
+        curl -fsSL --retry 5 --retry-delay 2 https://nginx.org/en/download.html |
+            grep -oE 'nginx-[0-9]+\.[0-9]+\.[0-9]+\.tar\.gz' |
+            head -n 1 |
+            sed 's/\.tar\.gz$//'
+    )"
+    [[ -n "${version}" ]] || return 1
+    printf '%s\n' "${version}"
+}
+
 # =============================================================================
 # 函数名称: _install
 # 功能描述: 根据操作系统类型安装指定的软件包。
@@ -528,8 +544,9 @@ function gen_cflags() {
 function source_compile() {
     cd "${TMPFILE_DIR}" # 切换到临时目录
     print_info "$(echo "$I18N_DATA" | jq -r '.nginx.compile.fetch_versions')"
-    # 从 GitHub API 获取最新的 Nginx release 标签名
-    local nginx_version="$(wget -qO- --no-check-certificate https://api.github.com/repos/nginx/nginx/tags | grep 'name' | cut -d\" -f4 | grep 'release' | head -1 | sed 's/release/nginx/')"
+    # 从 Nginx 官方下载页获取当前主线版本
+    local nginx_version
+    nginx_version="$(get_latest_nginx_version)" || print_error "failed to fetch the latest Nginx version"
     # 获取最新的 OpenSSL 标签名 (格式为 openssl-x.y.z)
     local openssl_version="openssl-$(wget -qO- --no-check-certificate https://api.github.com/repos/openssl/openssl/tags | grep 'name' | cut -d\" -f4 | grep -Eoi '^openssl-([0-9]\.?){3}$' | head -1)"
 
@@ -589,7 +606,7 @@ function source_compile() {
 # 返回值: 无 (执行编译和安装过程)
 # =============================================================================
 function source_install() {
-    source_compile # 先执行编译
+    source_compile || return 1 # 先执行编译
     print_info "$(echo "$I18N_DATA" | jq -r '.nginx.install.start_install')"
     make install                                      # 执行安装 (将文件复制到 --prefix 指定的目录)
     mkdir -p /var/log/nginx                           # 创建日志目录
@@ -605,7 +622,8 @@ function source_install() {
 function source_update() {
     print_info "$(echo "$I18N_DATA" | jq -r '.nginx.update.fetch_versions')"
     # 获取最新的版本号
-    local latest_nginx_version="$(wget -qO- --no-check-certificate https://api.github.com/repos/nginx/nginx/tags | grep 'name' | cut -d\" -f4 | grep 'release' | head -1 | sed 's/release/nginx/')"
+    local latest_nginx_version
+    latest_nginx_version="$(get_latest_nginx_version)" || print_error "failed to fetch the latest Nginx version"
     local latest_openssl_version="$(wget -qO- --no-check-certificate https://api.github.com/repos/openssl/openssl/tags | grep 'name' | cut -d\" -f4 | grep -Eoi '^openssl-([0-9]\.?){3}$' | head -1)"
 
     print_info "$(echo "$I18N_DATA" | jq -r '.nginx.update.read_current_versions')"
@@ -614,8 +632,8 @@ function source_update() {
     local current_version_openssl="$(nginx -V 2>&1 | grep "^built with OpenSSL" | awk '{print $4}')"
 
     print_info "$(echo "$I18N_DATA" | jq -r '.nginx.update.check_update')"
-    # 使用 _version_ge 函数比较版本，如果任一组件有新版本则进行更新
-    if _version_ge "${latest_nginx_version#*-}" "${current_version_nginx}" || _version_ge "${latest_openssl_version#*-}" "${current_version_openssl}"; then
+    # 仅当任一组件存在更高版本时更新，避免版本相同时重复编译
+    if _version_gt "${latest_nginx_version#*-}" "${current_version_nginx}" || _version_gt "${latest_openssl_version#*-}" "${current_version_openssl}"; then
         source_compile # 重新编译新版本
         print_info "$(echo "$I18N_DATA" | jq -r '.nginx.update.start_update')"
         # 备份旧的 nginx 二进制文件

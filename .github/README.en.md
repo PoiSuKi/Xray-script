@@ -70,6 +70,7 @@
    6. A custom site domain must not duplicate `domain`, `cdn`, or another custom site domain; CA switching and "force renew all certificates" also cover custom site domains.
    7. Custom sites are "pure reverse proxy sites". They do not include Xray `xhttp/grpc` paths and are not managed by the Cloudreve integration; the proxy layer does not inject an extra `Content-Security-Policy`, so CSP should be controlled by the upstream application.
 4. v2026.11.05 adapts to the current Xray installer by removing the obsolete `-u root` option, supporting the dedicated `xray` runtime user and configuration permissions, delegating GeoData updates to the official `update-geodata` action, and moving script self-updates to the PoiSuKi fork.
+5. v2026.11.05-r2 resolves the Nginx mainline version from the official Nginx download page, avoids recompiling when versions are unchanged, ensures SNI mode uses the script-managed `/usr/local/nginx`, and disables inbound traffic sniffing for every Xray template by default.
 
 ## Share Links
 

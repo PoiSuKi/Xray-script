@@ -51,6 +51,7 @@ readonly SERVICE_DIR="${PROJECT_ROOT}/service"    # 服务管理脚本目录
 readonly TOOL_DIR="${PROJECT_ROOT}/tool"          # 工具脚本目录
 readonly SCRIPT_XRAY_DIR="${CONFIG_DIR}/xray"     # Xray 配置模板目录
 readonly NGINX_CONFIG_DIR="/usr/local/nginx/conf" # Nginx 配置目录 (目标路径)
+readonly MANAGED_NGINX_BINARY="/usr/local/nginx/sbin/nginx"
 # 定义项目内子脚本的路径
 readonly GENERATE_PATH="${CUR_DIR}/generate.sh" # 生成器脚本
 readonly CHECK_PATH="${CUR_DIR}/check.sh"       # 检查器脚本
@@ -982,6 +983,8 @@ function handler_xray_config() {
     local WARP_STATUS="$(echo "${SCRIPT_CONFIG}" | jq -r '.xray.warp')"              # 获取 WARP 状态
     # 加载对应配置标签的 Xray 配置模板
     XRAY_CONFIG="$(jq '.' ${SCRIPT_XRAY_DIR}/${CONFIG_TAG}.json)"
+    # 安装配置默认关闭流量探测，避免覆盖入站目标地址
+    XRAY_CONFIG="$(echo "${XRAY_CONFIG}" | jq '(.inbounds[] | select(.sniffing != null) | .sniffing.enabled) = false')"
     # 如果配置标签不是 sni，则更新端口
     if [[ "${CONFIG_TAG,,}" != 'sni' ]]; then
         XRAY_CONFIG="$(echo "${XRAY_CONFIG}" | jq --argjson port "${XRAY_PORT}" '.inbounds[1].port = $port')"
@@ -1730,8 +1733,8 @@ function handler_reset_warp() {
 # =============================================================================
 # 函数名称: handler_nginx_install
 # 功能描述: 安装 Nginx。
-#           1. 检查系统中是否已安装 nginx 命令。
-#           2. 如果未安装，则调用 nginx.sh 脚本安装 (带 --brotli 参数)。
+#           1. 检查脚本管理的 /usr/local/nginx 是否已安装。
+#           2. 如果未安装，则调用 nginx.sh 脚本编译安装 (带 --brotli 参数)。
 #           3. 安装 SSL 证书管理工具。
 #           4. 配置 Nginx。
 #           5. 获取并保存 Nginx 版本到脚本配置。
@@ -1739,8 +1742,8 @@ function handler_reset_warp() {
 # 返回值: 无 (通过调用其他脚本执行操作)
 # =============================================================================
 function handler_nginx_install() {
-    # 检查 nginx 命令是否存在
-    if ! cmd_exists 'nginx'; then
+    # 仅以脚本管理的 /usr/local/nginx 为准，避免发行版 Nginx 阻断源码版安装
+    if [[ ! -x "${MANAGED_NGINX_BINARY}" ]]; then
         # 调用 nginx.sh 脚本安装 Nginx (带 Brotli 支持)
         bash "${NGINX_PATH}" --install --brotli || _error "nginx install failed"
         # 安装 SSL 证书管理工具

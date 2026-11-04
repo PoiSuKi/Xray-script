@@ -69,6 +69,7 @@
    6. 自定义域名不能与 `domain`、`cdn` 或其他自定义站点域名重复；切换 CA 厂商与“强制续签所有证书”都会覆盖自定义站点域名。
    7. 自定义站点为“纯反代站点”，不包含 Xray 的 `xhttp/grpc` 路径，也不接入 Cloudreve 管理逻辑；代理层不会额外注入 `Content-Security-Policy`，由上游应用自行控制 CSP。
 4. v2026.11.05 版本适配新版 Xray 官方安装器：移除已废弃的 `-u root` 参数，兼容专用 `xray` 运行用户与配置权限，GeoData 更新改用官方 `update-geodata`，并将脚本自更新地址切换至 PoiSuKi fork。
+5. v2026.11.05-r2 版本将 Nginx 主线版本来源切换为 Nginx 官方下载页，修复版本相同时重复编译，并确保 SNI 模式始终使用脚本管理的 `/usr/local/nginx`；同时默认关闭所有 Xray 入站流量探测。
 
 ## 分享链接
 
