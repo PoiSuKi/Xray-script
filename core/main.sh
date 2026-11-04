@@ -474,6 +474,7 @@ function processes_index() {
     7) exec_handler '--share' ;;      # 选择 7：显示分享链接
     8) exec_handler '--traffic' ;;    # 选择 8：显示流量统计
     9) processes_config ;;            # 选择 9：进入配置管理流程
+    88) exec_handler '--bbr' ;;       # 选择 88：安装并启用 BBR
     99) processes_script_update ;;    # 选择 99：更新脚本
     *) exit 0 ;;                      # 其他情况：退出脚本
     esac

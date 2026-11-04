@@ -133,6 +133,7 @@ function menu_index() {
     echo -e "${GREEN}7.${NC} $(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.index.option7")"
     echo -e "${GREEN}8.${NC} $(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.index.option8")"
     echo -e "${GREEN}9.${NC} $(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.index.option9")"
+    echo -e "${GREEN}88.${NC} $(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.index.option88")"
     echo -e "${GREEN}99.${NC} $(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.index.option99")"
 
     # 打印退出选项

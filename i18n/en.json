@@ -38,6 +38,7 @@
       "option7": "Share Link & QR Code",
       "option8": "Traffic Statistics",
       "option9": "Manage Configuration",
+      "option88": "One-click BBR Install",
       "option99": "Update Script",
       "option0": "Exit"
     },
@@ -191,6 +192,19 @@
     "sni": {
       "port_guard_fail": "SNI initialization stopped: required port check failed"
     }
+  },
+  "bbr": {
+    "not_root": "Run the BBR configuration as root",
+    "unsupported_virt": "LXC/OpenVZ containers share the host kernel and cannot enable BBR independently",
+    "checking": "Checking kernel BBR support",
+    "module_missing": "The tcp_bbr module is unavailable in the current kernel; upgrade to a kernel that includes BBR first",
+    "already_enabled": "BBR is already enabled; verifying persistent configuration",
+    "enabling": "Enabling BBR and writing persistent configuration",
+    "fq_unavailable": "The fq qdisc module was not detected; BBR will use TCP internal pacing",
+    "apply_failed": "Failed to apply BBR settings; previous settings were restored",
+    "verify_failed": "BBR status verification failed; previous settings were restored",
+    "completed": "BBR is enabled and will load automatically at boot",
+    "status": "Current status"
   },
   "read": {
     "version": "Custom version (e.g. v1.0.0): ",

@@ -62,6 +62,7 @@ readonly SSL_PATH="${SERVICE_DIR}/ssl.sh"       # SSL 证书管理脚本
 readonly DOCKER_PATH="${SERVICE_DIR}/docker.sh" # Docker 容器管理脚本
 readonly TRAFFIC_PATH="${TOOL_DIR}/traffic.sh"  # 流量统计脚本
 readonly GEODATA_PATH="${TOOL_DIR}/geodata.sh"  # GeoData 更新脚本
+readonly BBR_PATH="${TOOL_DIR}/bbr.sh"          # BBR 管理脚本
 # 定义外部配置文件和脚本的路径
 readonly XRAY_CONFIG_PATH="/usr/local/etc/xray/config.json"    # Xray 最终配置文件路径
 readonly SCRIPT_CONFIG_PATH="${SCRIPT_CONFIG_DIR}/config.json" # 脚本主配置文件路径
@@ -1675,6 +1676,10 @@ function handler_traffic() {
     bash "${TRAFFIC_PATH}"
 }
 
+function handler_bbr() {
+    bash "${BBR_PATH}"
+}
+
 # =============================================================================
 # 函数名称: handler_geodata_cron
 # 功能描述: 管理 GeoData 更新的 Cron 任务。
@@ -2286,6 +2291,7 @@ function main() {
     --share) handler_share ;;                   # 显示分享链接
     --nginx-cron) handler_nginx_cron ;;         # 管理 Nginx Cron
     --geodata-cron) handler_geodata_cron ;;     # 管理 GeoData Cron
+    --bbr) handler_bbr ;;                       # 安装并启用 BBR
     --warp) handler_warp ;;                     # 管理 WARP
     --reset-warp) handler_reset_warp ;;         # 重置 WARP
     --traffic) handler_traffic ;;               # 显示流量统计

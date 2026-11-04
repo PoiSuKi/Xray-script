@@ -38,6 +38,7 @@
       "option7": "分享链接与二维码",
       "option8": "信息统计",
       "option9": "管理配置",
+      "option88": "一键安装 BBR",
       "option99": "更新脚本",
       "option0": "退出"
     },
@@ -191,6 +192,19 @@
     "sni": {
       "port_guard_fail": "SNI 初始化已停止：必需端口检查未通过"
     }
+  },
+  "bbr": {
+    "not_root": "请使用 root 权限运行 BBR 配置",
+    "unsupported_virt": "当前 LXC/OpenVZ 容器共享宿主机内核，无法独立启用 BBR",
+    "checking": "正在检查内核 BBR 支持",
+    "module_missing": "当前内核没有可用的 tcp_bbr 模块，请先升级到包含 BBR 的内核",
+    "already_enabled": "BBR 已经启用，正在确认持久化配置",
+    "enabling": "正在启用 BBR 并写入持久化配置",
+    "fq_unavailable": "未检测到 fq 队列模块，BBR 将使用 TCP 内部 pacing",
+    "apply_failed": "应用 BBR 配置失败，已恢复原设置",
+    "verify_failed": "BBR 状态校验失败，已恢复原设置",
+    "completed": "BBR 已启用并设置为开机自动加载",
+    "status": "当前状态"
   },
   "read": {
     "version": "自选版本(e.g. v1.0.0): ",

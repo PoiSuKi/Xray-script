@@ -137,3 +137,26 @@ test("management menu exposes a Reality domain-only update", () => {
   assert.ok(zh.menu.config_management.option7);
   assert.ok(en.menu.config_management.option7);
 });
+
+test("main menu enables BBR as option 88 with persistent settings", () => {
+  const bbrPath = path.join(root, "tool", "bbr.sh");
+  assert.equal(fs.existsSync(bbrPath), true, "tool/bbr.sh must exist");
+
+  const menu = read("core/menu.sh");
+  const main = read("core/main.sh");
+  const handler = read("core/handler.sh");
+  const bbr = fs.readFileSync(bbrPath, "utf8");
+  const zh = JSON.parse(read("i18n/zh.json"));
+  const en = JSON.parse(read("i18n/en.json"));
+
+  assert.match(menu, /GREEN}88\./);
+  assert.match(main, /88\) exec_handler '--bbr'/);
+  assert.match(handler, /function handler_bbr/);
+  assert.match(bbr, /modprobe tcp_bbr/);
+  assert.match(bbr, /net\.ipv4\.tcp_congestion_control = bbr/);
+  assert.match(bbr, /net\.core\.default_qdisc = fq/);
+  assert.match(bbr, /\/etc\/sysctl\.d\/99-xray-script-bbr\.conf/);
+  assert.match(bbr, /\/etc\/modules-load\.d\/99-xray-script-bbr\.conf/);
+  assert.ok(zh.menu.index.option88);
+  assert.ok(en.menu.index.option88);
+});
