@@ -315,6 +315,8 @@ EOF
 # 返回值: 无 (直接打印到标准输出)
 # =============================================================================
 function show_client_config() {
+    local support_x25519mlkem768='false'
+    [[ "${CLIENT_CONFIG[security],,}" == 'reality' ]] && support_x25519mlkem768='true'
     # 使用 Here Document 打印客户端配置的标题和各项参数
     cat <<EOF
 ------------------ $(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.client")(${CLIENT_CONFIG[tag]}) ------------------
@@ -332,6 +334,7 @@ path             : ${CLIENT_CONFIG[path]}
 Fingerprint      : chrome
 PublicKey        : ${CLIENT_CONFIG[public_key]}
 ShortId          : ${CLIENT_CONFIG[short_id]}
+SupportX25519MLKEM768 : ${support_x25519mlkem768}
 SpiderX          : /
 EOF
 }

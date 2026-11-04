@@ -75,6 +75,7 @@
 7. v2026.11.05-r4 adds menu option `99. Update Script` and a management action that changes only the REALITY domain while preserving all other settings.
 8. v2026.11.05-r5 adds `88. One-click BBR Install`, using the kernel `tcp_bbr` module, `fq` qdisc, and persistent `sysctl.d`/`modules-load.d` configuration.
 9. v2026.11.05-r6 skips `nginx.service` state checks when the script-managed Nginx is not installed, removing the systemd `Failed to get unit file state for nginx.service` message from Xray-only configurations.
+10. v2026.11.05-r7 preserves custom UUID input as a single argument and displays `SupportX25519MLKEM768` in the terminal client configuration.
 
 ## Share Links
 

@@ -181,3 +181,31 @@ test("nginx lifecycle operations skip an uninstalled managed service", () => {
     /function handler_nginx_stop\(\)[\s\S]{0,120}nginx_service_is_managed \|\| return 0/,
   );
 });
+
+test("custom UUID input is preserved as one generator argument", () => {
+  const handler = read("core/handler.sh");
+  const generator = read("core/generate.sh");
+  const check = read("core/check.sh");
+
+  assert.match(
+    handler,
+    /exec_generate '--uuid' "\$\{CONFIG_DATA\['uuid'\]\}"/,
+  );
+  assert.match(generator, /generate_uuid_from_string/);
+  assert.match(generator, /sha1/);
+  assert.match(check, /uuid_bytes/);
+  assert.match(
+    handler,
+    /uuid \| fallback\)[\s\S]{0,180}exec_check '--uuid' "\$\{result\}" \|\| continue/,
+  );
+});
+
+test("terminal client output includes the REALITY ML-KEM flag", () => {
+  const share = read("core/share.sh");
+
+  assert.match(share, /SupportX25519MLKEM768/);
+  assert.match(
+    share,
+    /CLIENT_CONFIG\[security\][\s\S]{0,180}support_x25519mlkem768[\s\S]{0,120}true/,
+  );
+});

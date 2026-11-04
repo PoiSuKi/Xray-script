@@ -461,6 +461,7 @@ function check_port() {
 # =============================================================================
 function check_uuid() {
     local uuid="$1" # 获取 UUID 参数
+    local uuid_bytes
 
     # 打印正在检查的信息
     _info "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.uuid.check")${uuid}"
@@ -470,6 +471,11 @@ function check_uuid() {
         _pass "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.uuid.empty")"
     # 如果 UUID 不符合标准格式，则认为是有效的字符串（可能表示使用普通字符串）
     elif ! [[ "$uuid" =~ $UUID_REGEX ]]; then
+        uuid_bytes="$(printf '%s' "${uuid}" | wc -c | tr -d ' ')"
+        if ((uuid_bytes > 30)); then
+            _fail "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.uuid.length_error")"
+            return 1
+        fi
         _pass "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.uuid.string")$uuid"
     else
         # 如果符合标准格式，则为有效 UUID

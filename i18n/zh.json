@@ -275,7 +275,8 @@
       "check": "正在检查 UUID 类型：",
       "string": "输入值为普通字符串，将使用 Xray 映射生成 UUID",
       "empty": "输入值为空，将自动生成一份 UUID",
-      "valid": "UUID 合法："
+      "valid": "UUID 合法：",
+      "length_error": "自定义字符串的 UTF-8 长度必须不超过 30 字节"
     },
     "password": {
       "check": "正在检查密码合法性：",

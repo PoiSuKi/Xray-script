@@ -275,7 +275,8 @@
       "check": "Checking UUID type: ",
       "string": "Input is a plain string, will be mapped to UUID by Xray",
       "empty": "Input is empty, will auto-generate a UUID",
-      "valid": "UUID is valid: "
+      "valid": "UUID is valid: ",
+      "length_error": "A custom string must not exceed 30 UTF-8 bytes"
     },
     "password": {
       "check": "Checking password validity: ",

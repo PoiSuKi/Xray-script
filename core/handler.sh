@@ -257,7 +257,7 @@ function exec_read() {
             ;;
         uuid | fallback)
             # 验证 UUID (fallback 也使用 uuid 验证)
-            exec_check '--uuid' "${result}"
+            exec_check '--uuid' "${result}" || continue
             ;;
         seed | password)
             # 验证密码或种子
@@ -846,7 +846,7 @@ function handler_script_config() {
     # 获取端口，默认 443
     local XRAY_PORT="${CONFIG_DATA['port']:-443}"
     # 获取或生成 UUID
-    local XRAY_UUID="$(exec_generate '--uuid' ${CONFIG_DATA['uuid']})"
+    local XRAY_UUID="$(exec_generate '--uuid' "${CONFIG_DATA['uuid']}")"
     # 获取或生成 Fallback UUID
     local FALLBACK_UUID="${CONFIG_DATA['fallback']:-$(exec_generate '--uuid')}"
     # 获取或生成 Trojan 密码

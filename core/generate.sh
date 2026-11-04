@@ -78,34 +78,53 @@ function generate_port() {
 
 # =============================================================================
 # 函数名称: generate_uuid
-# 功能描述: 生成一个 UUID。如果系统安装了 `xray` 命令，优先使用它来生成；
-#           否则使用系统自带的 `/proc/sys/kernel/random/uuid`。
+# 功能描述: 生成一个 UUID。标准 UUID 原样使用；自定义字符串优先通过
+#           `xray uuid -i` 映射，未安装 xray 时按相同 UUIDv5 算法本地生成。
 # 参数:
-#   $1 (可选): 输入字符串，用于生成基于该输入的 UUID (需要 xray 支持)
+#   $1 (可选): 标准 UUID 或不超过 30 字节的自定义字符串
 # 返回值: 生成的 UUID 字符串 (echo 输出)
 # =============================================================================
+function generate_uuid_from_string() {
+    local input="$1"
+    local digest
+    local variant_nibble
+
+    digest="$(
+        {
+            head -c 16 /dev/zero
+            printf '%s' "${input}"
+        } | openssl dgst -sha1 -r 2>/dev/null | awk '{print $1}'
+    )"
+    [[ "${digest}" =~ ^[0-9a-f]{40}$ ]] || return 1
+
+    variant_nibble="$(printf '%x' $(((16#${digest:16:1} & 3) | 8)))"
+    printf '%s-%s-5%s-%s%s-%s\n' \
+        "${digest:0:8}" \
+        "${digest:8:4}" \
+        "${digest:13:3}" \
+        "${variant_nibble}" \
+        "${digest:17:3}" \
+        "${digest:20:12}"
+}
+
 function generate_uuid() {
     local input="${1}" # 获取可选的输入参数
     local uuid         # 声明用于存储 UUID 的局部变量
 
-    # 检查系统中是否存在 xray 命令
-    if command -v xray &>/dev/null; then
-        # 如果没有提供输入参数
-        if [[ -z "${input}" ]]; then
-            # 直接生成一个新的 UUID
+    if [[ "${input}" =~ ^[0-9a-fA-F]{8}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{12}$ ]]; then
+        uuid="${input}"
+    elif [[ -z "${input}" ]]; then
+        if command -v xray &>/dev/null; then
             uuid=$(xray uuid)
-        # 如果提供的输入参数已经是标准格式的 UUID
-        elif [[ "${input}" =~ ^[0-9a-fA-F]{8}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{12}$ ]]; then
-            # 则直接使用该输入作为 UUID
-            uuid=${input}
         else
-            # 否则，使用提供的输入字符串生成一个基于该输入的 UUID
-            uuid=$(xray uuid -i "${input}")
+            uuid=$(cat /proc/sys/kernel/random/uuid)
         fi
+    elif command -v xray &>/dev/null; then
+        uuid=$(xray uuid -i "${input}")
     else
-        # 如果没有安装 xray，则使用系统方法生成 UUID
-        uuid=$(cat /proc/sys/kernel/random/uuid)
+        uuid="$(generate_uuid_from_string "${input}")" || return 1
     fi
+
     # 输出生成的 UUID
     echo "${uuid}"
 }
