@@ -60,6 +60,8 @@ declare -A I18N_DATA=(
     ['now']='是否更新 [Y/n] '
     ['promptly']='请及时更新脚本'
     ['completed']='更新完成'
+    ['latest']='当前已是最新版本'
+    ['not_installed']='当前未安装 Xray-script'
     ['download']='正在下载'
     ['failed']='下载失败'
     ['downloaded']='文件已下载到'
@@ -74,6 +76,7 @@ declare QUICK_INSTALL='' # 存储快速安装选项 (如 --vision, --xhttp)
 declare SCRIPT_CONFIG='' # 存储脚本配置内容
 declare LANG_PARAM=''    # 存储命令行指定的语言参数
 declare FORCE_CHECK_DEPS=0 # 是否强制检查/安装依赖 (0/1)
+declare UPDATE_ONLY=0      # 是否仅更新脚本文件 (0/1)
 
 # =============================================================================
 # 函数名称: _os
@@ -180,6 +183,9 @@ function parse_args() {
         --check-deps)
             FORCE_CHECK_DEPS=1
             ;;
+        --update)
+            UPDATE_ONLY=1
+            ;;
         esac
         shift # 移动到下一个参数
     done
@@ -221,6 +227,8 @@ function load_i18n() {
             ['now']='Update now? [Y/n]'
             ['promptly']='Please update the script promptly.'
             ['completed']='Update completed'
+            ['latest']='Already up to date'
+            ['not_installed']='Xray-script is not installed'
             ['download']='Downloading'
             ['failed']='Download failed'
             ['downloaded']='The file has been downloaded to'
@@ -417,6 +425,38 @@ function download_xray_script_files() {
 # 参数: 无 (直接使用全局变量 PROJECT_ROOT)
 # 返回值: 无 (打印版本检查信息到标准输出)
 # =============================================================================
+function update_xray_script_files() {
+    local remote_version="$1"
+    local temp_dir="${SCRIPT_CONFIG_DIR}/xray-script-temp.$$"
+    local backup_dir="${PROJECT_ROOT}.backup.$$"
+
+    rm -rf "${temp_dir}" "${backup_dir}"
+    mkdir -p "${temp_dir}"
+    download_xray_script_files "${temp_dir}"
+
+    if [[ ! -f "${temp_dir}/install.sh" ]]; then
+        rm -rf "${temp_dir}"
+        _error "${I18N_DATA['failed']}"
+    fi
+
+    mv "${PROJECT_ROOT}" "${backup_dir}" || return 1
+    if ! mv "${temp_dir}" "${PROJECT_ROOT}"; then
+        mv "${backup_dir}" "${PROJECT_ROOT}"
+        return 1
+    fi
+    rm -rf "${backup_dir}"
+
+    if [[ "${CUR_DIR}/${CUR_FILE}" != "${PROJECT_ROOT}/install.sh" ]]; then
+        rm -f "${CUR_DIR}/${CUR_FILE}"
+        cp -f "${PROJECT_ROOT}/install.sh" "${CUR_DIR}/${CUR_FILE}"
+    fi
+
+    local updated_config
+    updated_config="$(jq --arg version "${remote_version}" '.version = $version' "${SCRIPT_CONFIG_PATH}")" || return 1
+    echo "${updated_config}" >"${SCRIPT_CONFIG_PATH}" && sleep 1
+    echo -e "${GREEN}[${I18N_DATA['tip']}]${NC} ${I18N_DATA['completed']}"
+}
+
 function check_xray_script_version() {
     # 定义 GitHub API URL 和本地版本文件路径
     local script_config_github_url="https://raw.githubusercontent.com/PoiSuKi/Xray-script/main/config.json"
@@ -425,50 +465,34 @@ function check_xray_script_version() {
     # 读取本地版本号
     local local_version="$(jq -r '.version' "${SCRIPT_CONFIG_PATH}")"
     # 从 GitHub API 获取远程版本号
-    local remote_version="$(curl -fsSL "$script_config_github_url" | jq -r '.version')"
+    local remote_version="$(curl -fsSL "$script_config_github_url" | jq -r '.version // empty')"
+    [[ -n "${remote_version}" ]] || _error "${I18N_DATA['failed']}"
 
-    # 比较本地和远程版本号
-    if [[ "${local_version}" != "${remote_version}" ]]; then
-        # 如果不一致，则提示用户有新版本
-        echo -e "${GREEN}[${I18N_DATA['tip']}]${NC} ${I18N_DATA['new']}"
-        # 询问用户是否更新
-        read -rp "${I18N_DATA['now']}" -e -i "Y" is_update
-
-        # 根据用户选择决定是否更新
-        case "${is_update,,}" in # ${is_update,,} 转换为小写
-        y | yes)
-            # 如果用户选择更新
-            # 切换到 HOME 目录
-            cd "${HOME}"
-            # 定义临时目录
-            readonly temp_dir="${SCRIPT_CONFIG_DIR}/xray-script-temp"
-            # 创建临时目录
-            mkdir -vp "${temp_dir}"
-            # 下载最新文件到临时目录
-            download_xray_script_files "${temp_dir}"
-            # 删除旧的项目目录
-            rm -rf "${PROJECT_ROOT}"
-            # 移动临时目录成为新项目目录
-            mv -f "${temp_dir}" "${PROJECT_ROOT}"
-            # 删除旧的脚本文件
-            rm -f "${CUR_DIR}/${CUR_FILE}"
-            # 更新当前脚本文件
-            cp -f "${PROJECT_ROOT}/install.sh" "${CUR_DIR}/${CUR_FILE}"
-            # 更新版本号
-            sed -i "s|${local_version}|${remote_version}|" "${SCRIPT_CONFIG_PATH}" && sleep 1
-            # 打印更新完成信息
-            echo -e "${GREEN}[${I18N_DATA['tip']}]${NC} ${I18N_DATA['completed']}"
-            # 重启脚本
-            bash "${CUR_DIR}/${CUR_FILE}"
-            # 退出脚本，避免重复执行
-            exit 0
-            ;;
-        *)
-            # 如果用户选择不更新，则提示及时更新
-            echo -e "${YELLOW}[${I18N_DATA['tip']}]${NC} ${I18N_DATA['promptly']}"
-            ;;
-        esac
+    if [[ "${local_version}" == "${remote_version}" ]]; then
+        [[ "${UPDATE_ONLY}" -eq 1 ]] && echo -e "${GREEN}[${I18N_DATA['tip']}]${NC} ${I18N_DATA['latest']}"
+        return 0
     fi
+
+    echo -e "${GREEN}[${I18N_DATA['tip']}]${NC} ${I18N_DATA['new']}"
+    if [[ "${UPDATE_ONLY}" -eq 1 ]]; then
+        is_update='y'
+    else
+        read -rp "${I18N_DATA['now']}" -e -i "Y" is_update
+    fi
+
+    case "${is_update,,}" in
+    y | yes)
+        cd "${HOME}"
+        update_xray_script_files "${remote_version}" || _error "${I18N_DATA['failed']}"
+        if [[ "${UPDATE_ONLY}" -eq 0 ]]; then
+            bash "${CUR_DIR}/${CUR_FILE}"
+            exit 0
+        fi
+        ;;
+    *)
+        echo -e "${YELLOW}[${I18N_DATA['tip']}]${NC} ${I18N_DATA['promptly']}"
+        ;;
+    esac
 }
 
 # =============================================================================
@@ -503,7 +527,7 @@ function main() {
     fi
 
     # 仅首次运行或显式强制时检查/安装依赖
-    if [[ "${is_first_run}" -eq 1 || "${FORCE_CHECK_DEPS}" -eq 1 ]]; then
+    if [[ "${UPDATE_ONLY}" -eq 0 ]] && [[ "${is_first_run}" -eq 1 || "${FORCE_CHECK_DEPS}" -eq 1 ]]; then
         # 检查依赖，如果缺失则安装
         if ! check_dependencies; then
             install_dependencies
@@ -568,7 +592,9 @@ function main() {
     if [[ -d "${PROJECT_ROOT}" ]]; then
         # 如果存在，则检查版本更新
         check_xray_script_version
+        [[ "${UPDATE_ONLY}" -eq 1 ]] && exit 0
     else
+        [[ "${UPDATE_ONLY}" -eq 1 ]] && _error "${I18N_DATA['not_installed']}"
         # 如果不存在，则下载项目文件
         download_xray_script_files "${PROJECT_ROOT}"
     fi

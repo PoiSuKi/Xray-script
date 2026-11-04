@@ -38,6 +38,7 @@
       "option7": "Share Link & QR Code",
       "option8": "Traffic Statistics",
       "option9": "Manage Configuration",
+      "option99": "Update Script",
       "option0": "Exit"
     },
     "full_installation": {
@@ -96,11 +97,13 @@
       "option4": "Change Xray Port",
       "option5": "Enable/Disable geodata auto-update",
       "option6": "Language",
+      "option7": "Change REALITY domain",
       "info1": "Full config update",
       "info2": "Manage blocking or WARP routing",
       "info3": "Includes Nginx update, domain change, web config",
       "info4": "(Non-SNI) Change Xray listen port and restart service",
-      "info5": "geodata provided by  https://github.com/Loyalsoldier/v2ray-rules-dat "
+      "info5": "geodata provided by  https://github.com/Loyalsoldier/v2ray-rules-dat ",
+      "info6": "Update only the REALITY target and ServerName; leave all other settings unchanged"
     },
     "route_management": {
       "title": "Custom Routing",
@@ -154,6 +157,15 @@
     "xray": {
       "config_update": "Updating Xray configuration"
     },
+    "reality": {
+      "read_failed": "Failed to read the current Xray configuration",
+      "not_configured": "The current configuration has no REALITY inbound",
+      "backup_failed": "Failed to back up the current configuration",
+      "update_failed": "Failed to update the REALITY domain",
+      "invalid_config": "The new Xray configuration failed validation and was not applied",
+      "restart_failed": "Xray failed to restart; the previous configuration was restored",
+      "updated": "REALITY domain updated: "
+    },
     "warp": {
       "status": "WARP PROXY is disabled, unable to add WARP routing"
     },
@@ -193,6 +205,7 @@
     "seed": "Enter seed (default auto-generated): ",
     "password": "Enter password (default auto-generated): ",
     "target": "Enter target domain (default random): ",
+    "reality_domain": "Enter the new REALITY domain: ",
     "only_change_domain": "Only change domain [Y/n]: ",
     "domain": "Enter website domain (for Reality): ",
     "cdn": "Enter website domain (for CDN): ",

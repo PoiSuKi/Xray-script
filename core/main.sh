@@ -435,8 +435,14 @@ function processes_config() {
     4) exec_handler '--change-port' ;;  # 选择 4：修改 Xray 端口
     5) exec_handler '--geodata-cron' ;; # 选择 5：配置 GeoData Cron 任务
     6) processes_language ;;            # 选择 6：设置语言
+    7) exec_handler '--change-reality-domain' ;; # 选择 7：仅修改 REALITY 域名
     *) exit 0 ;;                        # 其他情况：退出脚本
     esac
+}
+
+function processes_script_update() {
+    bash "${PROJECT_ROOT}/install.sh" --update || _error "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.handler_failed")"
+    exec bash "${CUR_DIR}/main.sh"
 }
 
 # =============================================================================
@@ -468,6 +474,7 @@ function processes_index() {
     7) exec_handler '--share' ;;      # 选择 7：显示分享链接
     8) exec_handler '--traffic' ;;    # 选择 8：显示流量统计
     9) processes_config ;;            # 选择 9：进入配置管理流程
+    99) processes_script_update ;;    # 选择 99：更新脚本
     *) exit 0 ;;                      # 其他情况：退出脚本
     esac
 }

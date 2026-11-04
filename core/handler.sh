@@ -266,6 +266,10 @@ function exec_read() {
             # 验证目标域名
             exec_check '--domain' "${result}" || continue
             ;;
+        reality-domain)
+            # 验证 REALITY 域名
+            exec_check '--domain' "${result}" || continue
+            ;;
         only-change-domain)
             # 为仅更新域名选项设置默认值 'Y'
             result="${result:-Y}"
@@ -1456,6 +1460,75 @@ function handler_change_xray_port() {
     echo "${SCRIPT_CONFIG}" >"${SCRIPT_CONFIG_PATH}" && sleep 2
 }
 
+function handler_change_reality_domain() {
+    local old_script_config="${SCRIPT_CONFIG}"
+    local old_domain
+    local new_domain
+    local new_config="${XRAY_CONFIG_PATH}.reality-domain.tmp"
+    local config_backup="${XRAY_CONFIG_PATH}.reality-domain.bak"
+    local script_backup="${SCRIPT_CONFIG_PATH}.reality-domain.bak"
+
+    XRAY_CONFIG="$(jq '.' "${XRAY_CONFIG_PATH}")" || _error "$(echo "$I18N_DATA" | jq -r '.handler.reality.read_failed')"
+    if ! echo "${XRAY_CONFIG}" | jq -e '.inbounds | any(.streamSettings.realitySettings? != null)' >/dev/null; then
+        _error "$(echo "$I18N_DATA" | jq -r '.handler.reality.not_configured')"
+    fi
+
+    old_domain="$(echo "${SCRIPT_CONFIG}" | jq -r '.xray.target // empty')"
+    exec_read 'reality-domain'
+    new_domain="${CONFIG_DATA['reality-domain']}"
+
+    cp -p "${XRAY_CONFIG_PATH}" "${config_backup}" || _error "$(echo "$I18N_DATA" | jq -r '.handler.reality.backup_failed')"
+    cp -p "${SCRIPT_CONFIG_PATH}" "${script_backup}" || _error "$(echo "$I18N_DATA" | jq -r '.handler.reality.backup_failed')"
+
+    if ! jq --arg domain "${new_domain}" '
+        .inbounds |= map(
+            if .streamSettings.realitySettings? != null then
+                (.streamSettings.realitySettings.target // "") as $old_target |
+                ($old_target | capture("^(?<host>[^:]+)(?::(?<port>[0-9]+))?$") // {host: "", port: "443"}) as $parsed |
+                .streamSettings.realitySettings.target = ($domain + ":" + ($parsed.port // "443")) |
+                .streamSettings.realitySettings.serverNames = [$domain]
+            else
+                .
+            end
+        )
+    ' "${XRAY_CONFIG_PATH}" >"${new_config}"; then
+        rm -f "${new_config}" "${config_backup}" "${script_backup}"
+        _error "$(echo "$I18N_DATA" | jq -r '.handler.reality.update_failed')"
+    fi
+
+    if ! xray run -test -config "${new_config}" >/dev/null 2>&1; then
+        rm -f "${new_config}" "${config_backup}" "${script_backup}"
+        _error "$(echo "$I18N_DATA" | jq -r '.handler.reality.invalid_config')"
+    fi
+
+    if ! cat "${new_config}" >"${XRAY_CONFIG_PATH}"; then
+        rm -f "${new_config}" "${config_backup}" "${script_backup}"
+        _error "$(echo "$I18N_DATA" | jq -r '.handler.reality.update_failed')"
+    fi
+    if ! SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --arg target "${new_domain}" --arg serverName "${new_domain}" '.xray.target = $target | .xray.serverNames = [$serverName]')" ||
+        ! echo "${SCRIPT_CONFIG}" >"${SCRIPT_CONFIG_PATH}"; then
+        cat "${config_backup}" >"${XRAY_CONFIG_PATH}"
+        cat "${script_backup}" >"${SCRIPT_CONFIG_PATH}"
+        SCRIPT_CONFIG="${old_script_config}"
+        handler_restart || true
+        rm -f "${new_config}" "${config_backup}" "${script_backup}"
+        _error "$(echo "$I18N_DATA" | jq -r '.handler.reality.update_failed')"
+    fi
+
+    handler_restart || true
+    if ! systemctl -q is-active xray; then
+        cat "${config_backup}" >"${XRAY_CONFIG_PATH}"
+        cat "${script_backup}" >"${SCRIPT_CONFIG_PATH}"
+        SCRIPT_CONFIG="${old_script_config}"
+        handler_restart || true
+        rm -f "${new_config}" "${config_backup}" "${script_backup}"
+        _error "$(echo "$I18N_DATA" | jq -r '.handler.reality.restart_failed')"
+    fi
+
+    rm -f "${new_config}" "${config_backup}" "${script_backup}"
+    echo -e "${GREEN}[$(echo "$I18N_DATA" | jq -r '.title.info')]${NC} $(echo "$I18N_DATA" | jq -r '.handler.reality.updated')${old_domain} -> ${new_domain}" >&2
+}
+
 function handler_xray_runtime_compat() {
     local config_dir
     config_dir="$(dirname -- "${XRAY_CONFIG_PATH}")"
@@ -2222,6 +2295,10 @@ function main() {
         handler_restart           # 重启 Xray
         handler_share             # 显示分享链接
         ;;                        # 修改 Xray 端口
+    --change-reality-domain)
+        handler_change_reality_domain
+        handler_share
+        ;;
     --start) handler_start ;;     # 启动 Xray
     --stop) handler_stop ;;       # 停止 Xray
     --restart) handler_restart ;; # 重启 Xray

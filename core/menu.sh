@@ -133,6 +133,7 @@ function menu_index() {
     echo -e "${GREEN}7.${NC} $(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.index.option7")"
     echo -e "${GREEN}8.${NC} $(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.index.option8")"
     echo -e "${GREEN}9.${NC} $(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.index.option9")"
+    echo -e "${GREEN}99.${NC} $(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.index.option99")"
 
     # 打印退出选项
     echo -e "------------------------------------------------------"
@@ -292,6 +293,8 @@ function menu_config() {
     echo -e "${GREEN}5.${NC} $(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.config_management.option5")"
     # 打印选项 6
     echo -e "${GREEN}6.${NC} $(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.config_management.option6")"
+    # 打印选项 7
+    echo -e "${GREEN}7.${NC} $(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.config_management.option7")"
 
     # 打印分隔线
     echo -e "------------------------------------------------------"
@@ -305,6 +308,8 @@ function menu_config() {
     echo -e "4. $(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.config_management.info4")"
     # 打印选项 5 的说明信息
     echo -e "5. $(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.config_management.info5")"
+    # 打印选项 7 的说明信息
+    echo -e "7. $(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.config_management.info6")"
     # 打印分隔线
     echo -e "------------------------------------------------------"
 }

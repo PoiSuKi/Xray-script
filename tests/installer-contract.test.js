@@ -105,3 +105,35 @@ test("client output uses Mihomo transport names and ML-KEM hint", () => {
     /SHARE_LINK_COMPONENT_REALITY=.*support-x25519mlkem768=true/,
   );
 });
+
+test("main menu exposes script update as option 99", () => {
+  const menu = read("core/menu.sh");
+  const main = read("core/main.sh");
+  const install = read("install.sh");
+  const zh = JSON.parse(read("i18n/zh.json"));
+  const en = JSON.parse(read("i18n/en.json"));
+
+  assert.match(menu, /GREEN}99\./);
+  assert.match(main, /99\) processes_script_update/);
+  assert.match(main, /install\.sh" --update/);
+  assert.match(install, /--update\)/);
+  assert.match(install, /UPDATE_ONLY/);
+  assert.ok(zh.menu.index.option99);
+  assert.ok(en.menu.index.option99);
+});
+
+test("management menu exposes a Reality domain-only update", () => {
+  const menu = read("core/menu.sh");
+  const main = read("core/main.sh");
+  const handler = read("core/handler.sh");
+  const zh = JSON.parse(read("i18n/zh.json"));
+  const en = JSON.parse(read("i18n/en.json"));
+
+  assert.match(menu, /config_management\.option7/);
+  assert.match(main, /7\) exec_handler '--change-reality-domain'/);
+  assert.match(handler, /function handler_change_reality_domain/);
+  assert.match(handler, /\.streamSettings\.realitySettings\.target/);
+  assert.match(handler, /\.streamSettings\.realitySettings\.serverNames/);
+  assert.ok(zh.menu.config_management.option7);
+  assert.ok(en.menu.config_management.option7);
+});

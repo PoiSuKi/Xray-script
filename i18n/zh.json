@@ -38,6 +38,7 @@
       "option7": "分享链接与二维码",
       "option8": "信息统计",
       "option9": "管理配置",
+      "option99": "更新脚本",
       "option0": "退出"
     },
     "full_installation": {
@@ -96,11 +97,13 @@
       "option4": "修改 Xray 端口",
       "option5": "开/关 geodata 自动更新",
       "option6": "设置语言",
+      "option7": "修改 REALITY 域名",
       "info1": "更新配置功能为整个配置的更新",
       "info2": "管理屏蔽或 WARP 分流",
       "info3": "包含 Nginx 更新，修改域名，修改 Web 配置等",
       "info4": "(非 SNI 配置) 修改 Xray 监听端口，并自动重启服务",
-      "info5": "geodata 由 https://github.com/Loyalsoldier/v2ray-rules-dat  提供"
+      "info5": "geodata 由 https://github.com/Loyalsoldier/v2ray-rules-dat  提供",
+      "info6": "仅修改 REALITY 的 target 与 ServerName，其余配置保持不变"
     },
     "route_management": {
       "title": "自定义分流",
@@ -154,6 +157,15 @@
     "xray": {
       "config_update": "正在更新 Xray 配置"
     },
+    "reality": {
+      "read_failed": "读取当前 Xray 配置失败",
+      "not_configured": "当前配置不包含 REALITY 入站",
+      "backup_failed": "备份当前配置失败",
+      "update_failed": "更新 REALITY 域名失败",
+      "invalid_config": "新的 Xray 配置校验失败，未应用修改",
+      "restart_failed": "Xray 重启失败，已恢复原配置",
+      "updated": "REALITY 域名已更新："
+    },
     "warp": {
       "status": "WARP PROXY 没有开启，无法添加 WARP 分流"
     },
@@ -193,6 +205,7 @@
     "seed": "请输入 seed (默认自动生成): ",
     "password": "请输入 password (默认自动生成): ",
     "target": "请输入目标域名 target (默认随机选择): ",
+    "reality_domain": "请输入新的 REALITY 域名: ",
     "only_change_domain": "仅更新域名 [Y/n]: ",
     "domain": "请输入网站域名 (供 Reality 使用): ",
     "cdn": "请输入网站域名 (供 CDN 使用): ",

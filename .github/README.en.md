@@ -72,6 +72,7 @@
 4. v2026.11.05 adapts to the current Xray installer by removing the obsolete `-u root` option, supporting the dedicated `xray` runtime user and configuration permissions, delegating GeoData updates to the official `update-geodata` action, and moving script self-updates to the PoiSuKi fork.
 5. v2026.11.05-r2 resolves the Nginx mainline version from the official Nginx download page, avoids recompiling when versions are unchanged, ensures SNI mode uses the script-managed `/usr/local/nginx`, and disables inbound traffic sniffing for every Xray template by default.
 6. v2026.11.05-r3 uses the Mihomo/Clash transport name `tcp` in client output and adds `support-x25519mlkem768=true` to Reality share links for Xray v26.9.8+ REALITY handshakes.
+7. v2026.11.05-r4 adds menu option `99. Update Script` and a management action that changes only the REALITY domain while preserving all other settings.
 
 ## Share Links
 
@@ -151,6 +152,7 @@ WARP Proxy : Running
 7. Share links and QR codes
 8. Statistics
 9. Manage configuration
+99. Update script
 -------------------------------------------
 0. Exit
 ```
