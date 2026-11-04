@@ -195,6 +195,11 @@ function get_common_config() {
     CLIENT_CONFIG[seed]="$(echo "${XRAY_CONFIG}" | jq -r --argjson i "${inbound_index}" '.inbounds[$i].streamSettings.kcpSettings.seed? | if . == null then empty else . end')"
     # 从 Xray 配置中获取网络传输类型 (如 tcp, kcp, xhttp)
     CLIENT_CONFIG[type]="$(echo "${XRAY_CONFIG}" | jq -r --argjson i "${inbound_index}" '.inbounds[$i].streamSettings.network? | if . == null then empty else . end')"
+    # 客户端仍使用 tcp 名称，raw 是服务端的新命名
+    CLIENT_CONFIG[client_type]="${CLIENT_CONFIG[type]}"
+    case "${CLIENT_CONFIG[type],,}" in
+    raw | tcp) CLIENT_CONFIG[client_type]="tcp" ;;
+    esac
     # 从 Xray 配置中获取 Flow 控制参数 (如 xtls-rprx-vision)
     CLIENT_CONFIG[flow]="$(echo "${XRAY_CONFIG}" | jq -r --argjson i "${inbound_index}" '.inbounds[$i].settings.clients[0].flow? | if . == null then empty else . end')"
     # 从 Xray 配置中获取安全传输类型 (如 none, tls, reality)
@@ -320,7 +325,7 @@ uuid             : ${CLIENT_CONFIG[uuid]}
 password(trojan) : ${CLIENT_CONFIG[password]}
 seed(mKCP)       : ${CLIENT_CONFIG[seed]}
 flow             : ${CLIENT_CONFIG[flow]}
-network          : ${CLIENT_CONFIG[type]}
+network          : ${CLIENT_CONFIG[client_type]}
 security         : ${CLIENT_CONFIG[security]}
 ServerName       : ${CLIENT_CONFIG[server_name]}
 path             : ${CLIENT_CONFIG[path]}
@@ -340,15 +345,15 @@ EOF
 # =============================================================================
 function get_share_link_component() {
     # 生成 VLESS 协议基础链接部分 (协议://UUID@地址:端口?网络类型=...)
-    SHARE_LINK_COMPONENT_VLESS="${CLIENT_CONFIG[protocol]}://${CLIENT_CONFIG[uuid]}@${CLIENT_CONFIG[remote_host]}:${CLIENT_CONFIG[port]}?type=${CLIENT_CONFIG[type]}"
+    SHARE_LINK_COMPONENT_VLESS="${CLIENT_CONFIG[protocol]}://${CLIENT_CONFIG[uuid]}@${CLIENT_CONFIG[remote_host]}:${CLIENT_CONFIG[port]}?type=${CLIENT_CONFIG[client_type]}"
     # 生成 Trojan 协议基础链接部分 (协议://密码@地址:端口?网络类型=...)
-    SHARE_LINK_COMPONENT_TROJAN="${CLIENT_CONFIG[protocol]}://${CLIENT_CONFIG[password]}@${CLIENT_CONFIG[remote_host]}:${CLIENT_CONFIG[port]}?type=${CLIENT_CONFIG[type]}"
+    SHARE_LINK_COMPONENT_TROJAN="${CLIENT_CONFIG[protocol]}://${CLIENT_CONFIG[password]}@${CLIENT_CONFIG[remote_host]}:${CLIENT_CONFIG[port]}?type=${CLIENT_CONFIG[client_type]}"
     # 生成 mKCP 网络传输参数部分 (&seed=...)
     SHARE_LINK_COMPONENT_MKCP="&seed=${CLIENT_CONFIG[seed]}"
     # 生成 TLS 安全传输参数部分 (&security=tls&sni=...&alpn=h2&fp=chrome)
     SHARE_LINK_COMPONENT_TLS="&security=${CLIENT_CONFIG[security]}&sni=${CLIENT_CONFIG[server_name]}&alpn=h2&fp=chrome"
     # 生成 Reality 安全传输参数部分 (&security=reality&sni=...&pbk=...&sid=...&spx=%2F&fp=chrome)
-    SHARE_LINK_COMPONENT_REALITY="&security=${CLIENT_CONFIG[security]}&sni=${CLIENT_CONFIG[server_name]}&pbk=${CLIENT_CONFIG[public_key]}&sid=${CLIENT_CONFIG[short_id]}&spx=%2F&fp=chrome"
+    SHARE_LINK_COMPONENT_REALITY="&security=${CLIENT_CONFIG[security]}&sni=${CLIENT_CONFIG[server_name]}&pbk=${CLIENT_CONFIG[public_key]}&sid=${CLIENT_CONFIG[short_id]}&spx=%2F&fp=chrome&support-x25519mlkem768=true"
     # 生成 XHTTP 网络传输路径参数部分 (&path=...), 注意去除路径开头的 '/'
     SHARE_LINK_COMPONENT_XHTTP="&path=%2F${CLIENT_CONFIG[path]#/}"
     # 生成 Flow 控制参数部分 (&flow=...)

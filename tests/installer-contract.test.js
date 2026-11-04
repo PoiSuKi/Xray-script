@@ -87,3 +87,21 @@ test("all Xray templates disable inbound sniffing by default", () => {
     /select\(\.sniffing != null\) \| \.sniffing\.enabled\) = false/,
   );
 });
+
+test("client output uses Mihomo transport names and ML-KEM hint", () => {
+  const share = read("core/share.sh");
+
+  assert.match(
+    share,
+    /CLIENT_CONFIG\[client_type\][\s\S]{0,180}raw[\s\S]{0,80}tcp/,
+  );
+  assert.match(share, /network\s+: \$\{CLIENT_CONFIG\[client_type\]\}/);
+  assert.match(
+    share,
+    /SHARE_LINK_COMPONENT_VLESS=.*type=\$\{CLIENT_CONFIG\[client_type\]\}/,
+  );
+  assert.match(
+    share,
+    /SHARE_LINK_COMPONENT_REALITY=.*support-x25519mlkem768=true/,
+  );
+});
