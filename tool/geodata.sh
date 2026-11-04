@@ -2,29 +2,11 @@
 
 set -e
 
-XRAY_DIR="/usr/local/share/xray"
+readonly XRAY_INSTALL_URL="https://github.com/XTLS/Xray-install/raw/main/install-release.sh"
 
-GEOIP_URL="https://github.com/Loyalsoldier/v2ray-rules-dat/raw/release/geoip.dat"
-GEOSITE_URL="https://github.com/Loyalsoldier/v2ray-rules-dat/raw/release/geosite.dat"
+installer="$(curl -fsSL --retry 5 --retry-delay 2 "${XRAY_INSTALL_URL}")"
+bash -c "${installer}" @ update-geodata
 
-[ -d $XRAY_DIR ] || mkdir -p $XRAY_DIR
-cd $XRAY_DIR
-
-curl -L -o geoip.dat.new $GEOIP_URL
-if [ $? -ne 0 ]; then
-    rm -f geoip.dat.new
-    exit 1
+if systemctl -q is-active xray; then
+    systemctl restart xray
 fi
-
-curl -L -o geosite.dat.new $GEOSITE_URL
-if [ $? -ne 0 ]; then
-    rm -f geoip.dat.new geosite.dat.new
-    exit 1
-fi
-
-rm -f geoip.dat geosite.dat
-
-mv geoip.dat.new geoip.dat
-mv geosite.dat.new geosite.dat
-
-systemctl -q is-active xray && systemctl restart xray

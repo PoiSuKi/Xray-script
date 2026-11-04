@@ -65,6 +65,7 @@ readonly GEODATA_PATH="${TOOL_DIR}/geodata.sh"  # GeoData 更新脚本
 readonly XRAY_CONFIG_PATH="/usr/local/etc/xray/config.json"    # Xray 最终配置文件路径
 readonly SCRIPT_CONFIG_PATH="${SCRIPT_CONFIG_DIR}/config.json" # 脚本主配置文件路径
 readonly ACME_PATH="${HOME}/.acme.sh/acme.sh"                  # ACME.sh 脚本路径
+readonly XRAY_INSTALL_URL="https://github.com/XTLS/Xray-install/raw/main/install-release.sh"
 
 # --- 全局变量声明 ---
 # 声明用于存储配置数据和国际化数据的全局变量
@@ -1452,6 +1453,28 @@ function handler_change_xray_port() {
     echo "${SCRIPT_CONFIG}" >"${SCRIPT_CONFIG_PATH}" && sleep 2
 }
 
+function handler_xray_runtime_compat() {
+    local config_dir
+    config_dir="$(dirname -- "${XRAY_CONFIG_PATH}")"
+
+    # 官方安装器创建 xray 用户后，旧安装也需要同步当前目录权限。
+    if ! getent group xray >/dev/null 2>&1; then
+        return 0
+    fi
+
+    install -d -m 0750 -o root -g xray "${config_dir}"
+    if [[ -e "${XRAY_CONFIG_PATH}" ]]; then
+        chown root:xray "${XRAY_CONFIG_PATH}"
+        chmod 0640 "${XRAY_CONFIG_PATH}"
+    fi
+
+    if getent passwd xray >/dev/null 2>&1; then
+        install -d -m 0700 -o xray -g xray /var/log/xray
+        chown -hR xray:xray /var/log/xray
+        chmod 0700 /var/log/xray
+    fi
+}
+
 # =============================================================================
 # 函数名称: handler_install
 # 功能描述: 安装 Xray 核心。
@@ -1476,8 +1499,14 @@ function handler_install() {
     # 检查 Xray 命令是否存在，或是否强制安装
     if ! cmd_exists 'xray' || [[ "${force_install}" != n ]]; then
         # 调用 Xray-install 脚本进行安装
-        bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install -u root --version "${CONFIG_DATA['version']}"
+        local installer
+        local -a install_args=(install --no-update-service --version "${CONFIG_DATA['version']}")
+        [[ "${force_install}" != "n" ]] && install_args+=(--force)
+
+        installer="$(curl -fsSL --retry 5 --retry-delay 2 "${XRAY_INSTALL_URL}")" || return 1
+        bash -c "${installer}" @ "${install_args[@]}" || return 1
     fi
+    handler_xray_runtime_compat
 }
 
 # =============================================================================
@@ -1488,7 +1517,9 @@ function handler_install() {
 # =============================================================================
 function handler_purge() {
     # 调用 Xray-install 脚本进行卸载 (带 --purge 参数)
-    bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ remove --purge
+    local installer
+    installer="$(curl -fsSL --retry 5 --retry-delay 2 "${XRAY_INSTALL_URL}")" || return 1
+    bash -c "${installer}" @ remove --purge || return 1
     # 重置 xray 字段
     SCRIPT_CONFIG=$(reset_json_fields "${SCRIPT_CONFIG}" 'xray')
     # 将重置后的脚本配置写入文件

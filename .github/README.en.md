@@ -69,6 +69,7 @@
    5. Editing only the upstream target skips certificate re-issuance; changing the domain issues the new certificate first and then switches over with rollback on failure; deleting a site also removes the site config, symlink, renew record, and certificate directory.
    6. A custom site domain must not duplicate `domain`, `cdn`, or another custom site domain; CA switching and "force renew all certificates" also cover custom site domains.
    7. Custom sites are "pure reverse proxy sites". They do not include Xray `xhttp/grpc` paths and are not managed by the Cloudreve integration; the proxy layer does not inject an extra `Content-Security-Policy`, so CSP should be controlled by the upstream application.
+4. v2026.11.05 adapts to the current Xray installer by removing the obsolete `-u root` option, supporting the dedicated `xray` runtime user and configuration permissions, delegating GeoData updates to the official `update-geodata` action, and moving script self-updates to the PoiSuKi fork.
 
 ## Share Links
 
@@ -81,7 +82,7 @@ In SNI configuration, CDN share links use H2 as default ALPN. If you need H3, mo
 * Download
 
   ```sh
-  wget --no-check-certificate -O ${HOME}/Xray-script.sh https://raw.githubusercontent.com/zxcvos/Xray-script/main/install.sh
+  wget --no-check-certificate -O ${HOME}/Xray-script.sh https://raw.githubusercontent.com/PoiSuKi/Xray-script/main/install.sh
   ```
 
 * Usage
@@ -112,7 +113,7 @@ In SNI configuration, CDN share links use H2 as default ALPN. If you need H3, mo
 * Quick start (UI)
 
   ```sh
-  wget --no-check-certificate -O ${HOME}/Xray-script.sh https://raw.githubusercontent.com/zxcvos/Xray-script/main/install.sh && bash ${HOME}/Xray-script.sh
+  wget --no-check-certificate -O ${HOME}/Xray-script.sh https://raw.githubusercontent.com/PoiSuKi/Xray-script/main/install.sh && bash ${HOME}/Xray-script.sh
   ```
 
 ## Script UI
