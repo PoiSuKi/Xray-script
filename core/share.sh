@@ -347,6 +347,8 @@ EOF
 # 返回值: 无 (直接修改一系列 SHARE_LINK_COMPONENT_* 全局变量)
 # =============================================================================
 function get_share_link_component() {
+    local xhttp_mode='auto'
+    [[ "${CLIENT_CONFIG[security],,}" == 'tls' ]] && xhttp_mode='stream-one'
     # 生成 VLESS 协议基础链接部分 (协议://UUID@地址:端口?网络类型=...)
     SHARE_LINK_COMPONENT_VLESS="${CLIENT_CONFIG[protocol]}://${CLIENT_CONFIG[uuid]}@${CLIENT_CONFIG[remote_host]}:${CLIENT_CONFIG[port]}?type=${CLIENT_CONFIG[client_type]}"
     # 生成 Trojan 协议基础链接部分 (协议://密码@地址:端口?网络类型=...)
@@ -358,7 +360,7 @@ function get_share_link_component() {
     # 生成 Reality 安全传输参数部分 (&security=reality&sni=...&pbk=...&sid=...&spx=%2F&fp=chrome)
     SHARE_LINK_COMPONENT_REALITY="&security=${CLIENT_CONFIG[security]}&sni=${CLIENT_CONFIG[server_name]}&pbk=${CLIENT_CONFIG[public_key]}&sid=${CLIENT_CONFIG[short_id]}&spx=%2F&fp=chrome&support-x25519mlkem768=true"
     # 生成 XHTTP 网络传输路径参数部分 (&path=...), 注意去除路径开头的 '/'
-    SHARE_LINK_COMPONENT_XHTTP="&path=%2F${CLIENT_CONFIG[path]#/}"
+    SHARE_LINK_COMPONENT_XHTTP="&path=%2F${CLIENT_CONFIG[path]#/}&mode=${xhttp_mode}"
     # 生成 Flow 控制参数部分 (&flow=...)
     SHARE_LINK_COMPONENT_FLOW="&flow=${CLIENT_CONFIG[flow]}"
     # 生成额外参数部分 (&extra=...), 使用之前编码好的 XHTTP_EXTRA_ENCODED

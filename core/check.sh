@@ -662,6 +662,13 @@ function check_domain_security() {
         _pass "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.tls.pass")"
     fi
 
+    if ! echo "$tls_info" | grep -Eiq 'ALPN protocol:[[:space:]]*h2'; then
+        _fail "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.tls.alpn_error")"
+        return 1
+    else
+        _pass "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.tls.alpn_pass")"
+    fi
+
     # 检查是否使用 X25519 密钥交换算法
     if echo "$tls_info" | grep -q "X25519"; then
         _pass "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.tls.key_exchange_pass")"

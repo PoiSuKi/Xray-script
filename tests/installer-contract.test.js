@@ -209,3 +209,79 @@ test("terminal client output includes the REALITY ML-KEM flag", () => {
     /CLIENT_CONFIG\[security\][\s\S]{0,180}support_x25519mlkem768[\s\S]{0,120}true/,
   );
 });
+
+test("SNI runtime sockets are separated by service owner", () => {
+  const sni = JSON.parse(read("config/xray/SNI.json"));
+  const nginxService = read("config/nginx/nginx.service");
+  const tmpfilesPath = path.join(root, "config", "systemd", "xray-script-runtime.conf");
+  assert.equal(fs.existsSync(tmpfilesPath), true);
+  const tmpfiles = fs.readFileSync(tmpfilesPath, "utf8");
+
+  const inboundListen = sni.inbounds[1].listen;
+  const fallbackListen = sni.inbounds[2].listen;
+  const realityTarget = sni.inbounds[1].streamSettings.realitySettings.target;
+  const fallbackDest = sni.inbounds[1].settings.fallbacks[0].dest;
+
+  assert.match(inboundListen, /^\/run\/xray-script\/xray\//);
+  assert.match(fallbackListen, /^\/run\/xray-script\/xray\//);
+  assert.match(fallbackDest, /^\/run\/xray-script\/xray\//);
+  assert.match(realityTarget, /^\/run\/xray-script\/nginx\//);
+  assert.match(nginxService, /Group=xray/);
+  assert.match(nginxService, /UMask=0007/);
+  assert.match(tmpfiles, /\/run\/xray-script\/xray 0770 xray xray/);
+  assert.match(tmpfiles, /\/run\/xray-script\/nginx 0750 root xray/);
+});
+
+test("REALITY domain editor rejects SNI target rewrites", () => {
+  const handler = read("core/handler.sh");
+
+  assert.match(
+    handler,
+    /function handler_change_reality_domain\(\)[\s\S]{0,700}config_tag[\s\S]{0,240}sni[\s\S]{0,180}_error/,
+  );
+});
+
+test("HTTP3 virtual hosts declare server_name", () => {
+  const domain = read("config/nginx/conf/sites-available/domain.example.com.conf");
+  const cdn = read("config/nginx/conf/sites-available/cdn.example.com.conf");
+
+  assert.match(domain, /server_name\s+example\.com;/);
+  assert.match(cdn, /server_name\s+example\.com;/);
+});
+
+test("XHTTP/TLS links select stream-one mode", () => {
+  const share = read("core/share.sh");
+
+  assert.match(
+    share,
+    /SHARE_LINK_COMPONENT_XHTTP=.*mode=\$\{xhttp_mode\}/,
+  );
+  assert.match(
+    share,
+    /security.*tls[\s\S]{0,100}xhttp_mode=['"]stream-one['"]/,
+  );
+});
+
+test("XHTTP and SNI enforce the minimum Xray version", () => {
+  const handler = read("core/handler.sh");
+
+  assert.match(handler, /v24\.12\.15/);
+  assert.match(handler, /function version_ge/);
+  assert.match(handler, /xhttp \| fallback \| sni/);
+});
+
+test("REALITY target validation requires negotiated H2 ALPN", () => {
+  const check = read("core/check.sh");
+
+  assert.match(check, /grep -Eiq 'ALPN protocol:\[\[:space:\]\]\*h2'/);
+  assert.match(check, /tls\.alpn_error/);
+});
+
+test("existing Nginx installations refresh the systemd service definition", () => {
+  const handler = read("core/handler.sh");
+  const nginx = read("service/nginx.sh");
+
+  assert.match(nginx, /--service/);
+  assert.match(nginx, /service\)\s+systemctl_config_nginx/);
+  assert.match(handler, /bash "\$\{NGINX_PATH\}" --service/);
+});

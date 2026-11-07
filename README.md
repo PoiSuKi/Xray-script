@@ -75,6 +75,7 @@
 8. v2026.11.05-r5 版本新增 `88. 一键安装 BBR`，通过内核 `tcp_bbr` 模块、`fq` 队列和 `sysctl.d`/`modules-load.d` 实现即时启用与开机持久化。
 9. v2026.11.05-r6 版本修复纯 Xray 配置在未安装 Nginx 时仍检查 `nginx.service`，导致 systemd 输出 `Failed to get unit file state for nginx.service` 的问题。
 10. v2026.11.05-r7 版本修复自定义 UUID 输入被 shell 拆分的问题，并在终端客户端配置中显示 `SupportX25519MLKEM768`。
+11. v2026.11.05-r8 版本重构 SNI 运行时 Socket 目录，使 Nginx 与 Xray 专用用户权限和启停生命周期隔离；同时增加 XHTTP/TLS `stream-one`、H2 ALPN 校验、最低 Xray 版本检查和 SNI 域名修改保护。升级后请重新应用一次 SNI 配置以迁移 Socket 路径。
 
 ## 分享链接
 

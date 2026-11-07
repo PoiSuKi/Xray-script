@@ -1,11 +1,17 @@
 [Unit]
 Description=The NGINX HTTP and reverse proxy server
 After=syslog.target network-online.target remote-fs.target nss-lookup.target
+Before=xray.service
 Wants=network-online.target
 
 [Service]
 Type=forking
 PIDFile=/run/nginx.pid
+Group=xray
+UMask=0007
+ExecStartPre=/usr/bin/install -d -m 0750 -o root -g xray /run/xray-script/nginx
+ExecStartPre=/usr/bin/install -d -m 0770 -o xray -g xray /run/xray-script/xray
+ExecStartPre=/bin/sh -c 'rm -f /run/xray-script/nginx/*.sock'
 ExecStartPre=/bin/rm -rf /dev/shm/nginx
 ExecStartPre=/bin/mkdir /dev/shm/nginx
 ExecStartPre=/bin/chmod 711 /dev/shm/nginx
@@ -16,6 +22,7 @@ ExecStart=/usr/sbin/nginx -g 'daemon on; master_process on;'
 ExecReload=/usr/sbin/nginx -g 'daemon on; master_process on;' -s reload
 ExecStop=/bin/kill -s QUIT $MAINPID
 ExecStopPost=/bin/rm -rf /dev/shm/nginx
+ExecStopPost=/bin/sh -c 'rm -f /run/xray-script/nginx/*.sock'
 TimeoutStopSec=5
 KillMode=mixed
 PrivateTmp=true

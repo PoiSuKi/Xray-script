@@ -681,6 +681,7 @@ function purge_nginx() {
     rm -rf /usr/sbin/nginx                   # 删除软链接
     rm -rf /etc/systemd/system/nginx.service # 删除 systemd 服务文件
     rm -rf "${NGINX_LOG_PATH}"               # 删除日志目录
+    rm -rf /run/xray-script/nginx            # 删除 Nginx 运行时 Socket 目录
     systemctl daemon-reload                  # 重新加载 systemd 配置
     print_info "$(echo "$I18N_DATA" | jq -r '.nginx.purge.purged')"
 }
@@ -698,11 +699,17 @@ function systemctl_config_nginx() {
 [Unit]
 Description=The NGINX HTTP and reverse proxy server
 After=syslog.target network-online.target remote-fs.target nss-lookup.target
+Before=xray.service
 Wants=network-online.target
 
 [Service]
 Type=forking
 PIDFile=/run/nginx.pid
+Group=xray
+UMask=0007
+ExecStartPre=/usr/bin/install -d -m 0750 -o root -g xray /run/xray-script/nginx
+ExecStartPre=/usr/bin/install -d -m 0770 -o xray -g xray /run/xray-script/xray
+ExecStartPre=/bin/sh -c 'rm -f /run/xray-script/nginx/*.sock'
 # 清理并创建共享内存目录用于 tcmalloc
 ExecStartPre=/bin/rm -rf /dev/shm/nginx
 ExecStartPre=/bin/mkdir /dev/shm/nginx
@@ -719,6 +726,7 @@ ExecReload=/usr/sbin/nginx -g 'daemon on; master_process on;' -s reload
 ExecStop=/bin/kill -s QUIT \$MAINPID
 # 停止后清理共享内存
 ExecStopPost=/bin/rm -rf /dev/shm/nginx
+ExecStopPost=/bin/sh -c 'rm -f /run/xray-script/nginx/*.sock'
 TimeoutStopSec=5
 KillMode=mixed
 PrivateTmp=true
@@ -742,6 +750,8 @@ function show_help() {
     local options_title="$(echo "$I18N_DATA" | jq -r '.nginx.help.options_title')"
     local opt_install="$(echo "$I18N_DATA" | jq -r '.nginx.help.opt_install')"
     local opt_update="$(echo "$I18N_DATA" | jq -r '.nginx.help.opt_update')"
+    local opt_service
+    opt_service="$(echo "$I18N_DATA" | jq -r '.nginx.help.opt_service')"
     local opt_brotli="$(echo "$I18N_DATA" | jq -r '.nginx.help.opt_brotli')"
     local opt_purge="$(echo "$I18N_DATA" | jq -r '.nginx.help.opt_purge')"
     local opt_help="$(echo "$I18N_DATA" | jq -r '.nginx.help.opt_help')"
@@ -752,6 +762,7 @@ ${usage}
 ${options_title}:
   --install    ${opt_install}
   --update     ${opt_update}
+  --service    ${opt_service}
   --brotli     ${opt_brotli}
   --purge      ${opt_purge}
   --help       ${opt_help}
@@ -784,7 +795,7 @@ function main() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
         # 处理主要操作参数
-        --install | --update | --purge)
+        --install | --update | --purge | --service)
             action="${1#--}" # 移除 '--' 前缀，获取操作名称 (install/update/purge)
             ;;
         # 处理 Brotli 选项
@@ -813,6 +824,9 @@ function main() {
     update)
         compile_dependencies # 安装/更新依赖 (如果需要)
         source_update        # 检查并更新
+        ;;
+    service)
+        systemctl_config_nginx
         ;;
     purge)
         purge_nginx # 卸载

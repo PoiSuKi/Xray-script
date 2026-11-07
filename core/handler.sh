@@ -52,6 +52,10 @@ readonly TOOL_DIR="${PROJECT_ROOT}/tool"          # 工具脚本目录
 readonly SCRIPT_XRAY_DIR="${CONFIG_DIR}/xray"     # Xray 配置模板目录
 readonly NGINX_CONFIG_DIR="/usr/local/nginx/conf" # Nginx 配置目录 (目标路径)
 readonly MANAGED_NGINX_BINARY="/usr/local/nginx/sbin/nginx"
+readonly XRAY_RUNTIME_DIR="/run/xray-script/xray"
+readonly NGINX_RUNTIME_DIR="/run/xray-script/nginx"
+readonly RUNTIME_TMPFILES_SOURCE="${CONFIG_DIR}/systemd/xray-script-runtime.conf"
+readonly RUNTIME_TMPFILES_DEST="/etc/tmpfiles.d/xray-script-runtime.conf"
 # 定义项目内子脚本的路径
 readonly GENERATE_PATH="${CUR_DIR}/generate.sh" # 生成器脚本
 readonly CHECK_PATH="${CUR_DIR}/check.sh"       # 检查器脚本
@@ -409,6 +413,19 @@ function sync_missing_nginx_support_dir() {
     done < <(find "${source_dir}" -type f -print0)
 }
 
+function migrate_nginx_runtime_paths() {
+    local target_path=''
+
+    while IFS= read -r target_path; do
+        [[ -n "${target_path}" ]] || continue
+        sed -E -i \
+            -e "s|/dev/shm/nginx/nginx_to_xray_vision\\.sock|${XRAY_RUNTIME_DIR}/nginx_to_xray_vision.sock|g" \
+            -e "s|/dev/shm/nginx/to_xray_xhttp\\.sock|${XRAY_RUNTIME_DIR}/to_xray_xhttp.sock|g" \
+            -e "s|/dev/shm/nginx/([^[:space:];]+)\\.sock|${NGINX_RUNTIME_DIR}/\\1.sock|g" \
+            "${target_path}"
+    done < <(grep -RIl '/dev/shm/nginx/' "${NGINX_CONFIG_DIR}" 2>/dev/null || true)
+}
+
 function ensure_nginx_support_files() {
     mkdir -p \
         "${NGINX_CONFIG_DIR}/sites-available" \
@@ -421,6 +438,7 @@ function ensure_nginx_support_files() {
     sync_missing_nginx_support_dir "${CONFIG_DIR}/nginx/conf/conf.d" "${NGINX_CONFIG_DIR}/conf.d" || return 1
     sync_missing_nginx_support_dir "${CONFIG_DIR}/nginx/conf/web" "${NGINX_CONFIG_DIR}/web" || return 1
     sync_missing_nginx_support_dir "${CONFIG_DIR}/nginx/conf/nginxconfig.io" "${NGINX_CONFIG_DIR}/nginxconfig.io" || return 1
+    migrate_nginx_runtime_paths
 }
 
 function write_stream_config() {
@@ -447,11 +465,11 @@ function write_stream_config() {
         echo '    }'
         echo
         echo '    upstream nginx_to_xray_vision {'
-        echo '        server unix:/dev/shm/nginx/nginx_to_xray_vision.sock;'
+        echo "        server unix:${XRAY_RUNTIME_DIR}/nginx_to_xray_vision.sock;"
         echo '    }'
         echo
         echo '    upstream cdn_to_nginx {'
-        echo '        server unix:/dev/shm/nginx/cdn_to_nginx.sock;'
+        echo "        server unix:${NGINX_RUNTIME_DIR}/cdn_to_nginx.sock;"
         echo '    }'
         echo
         while IFS=$'\t' read -r site_domain site_port; do
@@ -459,12 +477,12 @@ function write_stream_config() {
             socket_name="$(get_custom_site_socket_name "${site_domain}" "${site_port}")"
             upstream_name="$(get_custom_site_upstream_name "${site_domain}" "${site_port}")"
             echo "    upstream ${upstream_name} {"
-            echo "        server unix:/dev/shm/nginx/${socket_name}.sock;"
+            echo "        server unix:${NGINX_RUNTIME_DIR}/${socket_name}.sock;"
             echo '    }'
             echo
         done < <(echo "${source_config}" | jq -r '.nginx.custom_sites // [] | .[] | [.domain, (.port | tostring)] | @tsv')
         echo '    upstream default_backend {'
-        echo '        server unix:/dev/shm/nginx/default_backend.sock;'
+        echo "        server unix:${NGINX_RUNTIME_DIR}/default_backend.sock;"
         echo '    }'
         echo
         echo '    server {'
@@ -495,7 +513,7 @@ function render_custom_site_config() {
     ensure_nginx_support_files || return 1
     cp -f "${CONFIG_DIR}/nginx/conf/sites-available/custom-site.example.com.conf" "${output_path}" || return 1
     sed -i "s|example.com|${domain}|g" "${output_path}"
-    sed -i "s|unix:/dev/shm/nginx/custom_site.sock|unix:/dev/shm/nginx/${socket_name}.sock|g" "${output_path}"
+    sed -i "s|unix:${NGINX_RUNTIME_DIR}/custom_site.sock|unix:${NGINX_RUNTIME_DIR}/${socket_name}.sock|g" "${output_path}"
     sed -i "s|PROXY_TARGET|${proxy_target}|g" "${output_path}"
 }
 
@@ -827,6 +845,12 @@ function handler_update_ocsp_config() {
 #   $1: CONFIG_TAG - 配置标签 (例如 Vision, XHTTP, SNI 等)，默认从 CONFIG_DATA 获取
 # 返回值: 无 (直接修改 SCRIPT_CONFIG 全局变量和 SCRIPT_CONFIG_PATH 文件)
 # =============================================================================
+function version_ge() {
+    local current="${1#v}"
+    local required="${2#v}"
+    [[ "$(printf '%s\n' "${current}" "${required}" | sort -V | tail -n 1)" == "${current}" ]]
+}
+
 function handler_script_config() {
     # 打印绿色的配置更新提示
     echo -e "${GREEN}[$(echo "$I18N_DATA" | jq -r '.title.config')]${NC} $(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.script.config_update")" >&2
@@ -835,6 +859,17 @@ function handler_script_config() {
     # 从 CONFIG_DATA 或生成器获取配置值
     # 获取配置标签
     local CONFIG_TAG="${1:-${CONFIG_DATA['tag']}}"
+    case "${CONFIG_TAG,,}" in
+    xhttp | fallback | sni)
+        local selected_version="${CONFIG_DATA['version']:-$(echo "${SCRIPT_CONFIG}" | jq -r '.xray.version // empty')}"
+        if [[ -z "${selected_version}" ]] && cmd_exists 'xray'; then
+            selected_version="$(xray -version 2>/dev/null | awk 'NR == 1 {print $2}')"
+        fi
+        if [[ -z "${selected_version}" ]] || ! version_ge "${selected_version}" 'v24.12.15'; then
+            _error "$(echo "$I18N_DATA" | jq -r --arg version "${selected_version:-unknown}" '.handler.xray.min_version | sub("\\$\\{version\\}"; $version)')"
+        fi
+        ;;
+    esac
     # 获取规则状态
     local XRAY_RULES_STATUS="${CONFIG_DATA['rules']}"
     # 获取 block bt 状态
@@ -1468,11 +1503,17 @@ function handler_change_xray_port() {
 
 function handler_change_reality_domain() {
     local old_script_config="${SCRIPT_CONFIG}"
+    local config_tag
     local old_domain
     local new_domain
     local new_config="${XRAY_CONFIG_PATH}.reality-domain.tmp"
     local config_backup="${XRAY_CONFIG_PATH}.reality-domain.bak"
     local script_backup="${SCRIPT_CONFIG_PATH}.reality-domain.bak"
+
+    config_tag="$(echo "${SCRIPT_CONFIG}" | jq -r '.xray.tag // empty')"
+    if [[ "${config_tag,,}" == 'sni' ]]; then
+        _error "$(echo "$I18N_DATA" | jq -r '.handler.reality.sni_domain_notice')"
+    fi
 
     XRAY_CONFIG="$(jq '.' "${XRAY_CONFIG_PATH}")" || _error "$(echo "$I18N_DATA" | jq -r '.handler.reality.read_failed')"
     if ! echo "${XRAY_CONFIG}" | jq -e '.inbounds | any(.streamSettings.realitySettings? != null)' >/dev/null; then
@@ -1537,12 +1578,24 @@ function handler_change_reality_domain() {
 
 function handler_xray_runtime_compat() {
     local config_dir
+    local nologin_shell
     config_dir="$(dirname -- "${XRAY_CONFIG_PATH}")"
 
-    # 官方安装器创建 xray 用户后，旧安装也需要同步当前目录权限。
-    if ! getent group xray >/dev/null 2>&1; then
-        return 0
+    if ! id -u xray >/dev/null 2>&1 || ! getent group xray >/dev/null 2>&1; then
+        if command -v systemd-sysusers >/dev/null 2>&1; then
+            printf 'u xray - "Xray" /var/empty\n' | systemd-sysusers -
+        fi
+        if ! id -u xray >/dev/null 2>&1 || ! getent group xray >/dev/null 2>&1; then
+            command -v useradd >/dev/null 2>&1 && command -v groupadd >/dev/null 2>&1 ||
+                _error "failed to create xray runtime user"
+            getent group xray >/dev/null 2>&1 || groupadd --system xray
+            nologin_shell="$(command -v nologin || echo /bin/false)"
+            id -u xray >/dev/null 2>&1 || useradd --system --gid xray --home-dir /var/empty --shell "${nologin_shell}" xray
+        fi
     fi
+
+    id -u xray >/dev/null 2>&1 || _error "failed to create xray runtime user"
+    getent group xray >/dev/null 2>&1 || _error "failed to create xray runtime group"
 
     install -d -m 0750 -o root -g xray "${config_dir}"
     if [[ -e "${XRAY_CONFIG_PATH}" ]]; then
@@ -1550,10 +1603,19 @@ function handler_xray_runtime_compat() {
         chmod 0640 "${XRAY_CONFIG_PATH}"
     fi
 
-    if getent passwd xray >/dev/null 2>&1; then
-        install -d -m 0700 -o xray -g xray /var/log/xray
-        chown -hR xray:xray /var/log/xray
-        chmod 0700 /var/log/xray
+    install -d -m 0700 -o xray -g xray /var/log/xray
+    chown -hR xray:xray /var/log/xray
+    chmod 0700 /var/log/xray
+
+    install -d -m 0755 -o root -g root /run/xray-script
+    install -d -m 0770 -o xray -g xray "${XRAY_RUNTIME_DIR}"
+    install -d -m 0750 -o root -g xray "${NGINX_RUNTIME_DIR}"
+
+    if [[ -f "${RUNTIME_TMPFILES_SOURCE}" ]]; then
+        install -D -m 0644 "${RUNTIME_TMPFILES_SOURCE}" "${RUNTIME_TMPFILES_DEST}"
+        if command -v systemd-tmpfiles >/dev/null 2>&1; then
+            systemd-tmpfiles --create "${RUNTIME_TMPFILES_DEST}" >/dev/null 2>&1 || true
+        fi
     fi
 }
 
@@ -1825,6 +1887,7 @@ function handler_reset_warp() {
 # 返回值: 无 (通过调用其他脚本执行操作)
 # =============================================================================
 function handler_nginx_install() {
+    handler_xray_runtime_compat
     # 仅以脚本管理的 /usr/local/nginx 为准，避免发行版 Nginx 阻断源码版安装
     if [[ ! -x "${MANAGED_NGINX_BINARY}" ]]; then
         # 调用 nginx.sh 脚本安装 Nginx (带 Brotli 支持)
@@ -1841,6 +1904,7 @@ function handler_nginx_install() {
         # 将更新后的脚本配置写入文件
         echo "${SCRIPT_CONFIG}" >"${SCRIPT_CONFIG_PATH}" && sleep 2 || _error "failed to persist nginx version"
     fi
+    bash "${NGINX_PATH}" --service || _error "nginx service refresh failed"
 }
 
 # =============================================================================
@@ -1850,8 +1914,11 @@ function handler_nginx_install() {
 # 返回值: 无 (通过调用 nginx.sh 脚本执行更新)
 # =============================================================================
 function handler_nginx_update() {
+    handler_xray_runtime_compat
+    ensure_nginx_support_files || return 1
     # 调用 nginx.sh 脚本更新 Nginx (带 Brotli 支持)
     bash "${NGINX_PATH}" --update --brotli
+    bash "${NGINX_PATH}" --service || _error "nginx service refresh failed"
 }
 
 # =============================================================================

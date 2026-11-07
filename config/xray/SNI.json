@@ -58,7 +58,7 @@
     },
     {
       "tag": "VLESS-Vision-REALITY",
-      "listen": "/dev/shm/nginx/nginx_to_xray_vision.sock,0666",
+      "listen": "/run/xray-script/xray/nginx_to_xray_vision.sock,0666",
       "protocol": "vless",
       "settings": {
         "clients": [
@@ -72,7 +72,7 @@
         "decryption": "none",
         "fallbacks": [
           {
-            "dest": "/dev/shm/nginx/to_xray_xhttp.sock"
+            "dest": "/run/xray-script/xray/to_xray_xhttp.sock"
           }
         ]
       },
@@ -81,7 +81,7 @@
         "security": "reality",
         "realitySettings": {
           "show": false,
-          "target": "/dev/shm/nginx/xray_reality_to_nginx.sock",
+          "target": "/run/xray-script/nginx/xray_reality_to_nginx.sock",
           "xver": 1,
           "serverNames": [
             "example.com"
@@ -110,7 +110,7 @@
     },
     {
       "tag": "VLESS-XHTTP-REALITY",
-      "listen": "/dev/shm/nginx/to_xray_xhttp.sock,0666",
+      "listen": "/run/xray-script/xray/to_xray_xhttp.sock,0666",
       "protocol": "vless",
       "settings": {
         "clients": [
