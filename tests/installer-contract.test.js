@@ -70,12 +70,12 @@ test("bootstrap and documentation use the fork repository", () => {
   );
   assert.match(
     install,
-    /https:\/\/raw\.githubusercontent\.com\/PoiSuKi\/Xray-script\/main\/config\.json/,
+    /https:\/\/github\.com\/PoiSuKi\/Xray-script\/raw\/refs\/heads\/main\/config\.json/,
   );
   for (const readme of readmes) {
     assert.match(
       readme,
-      /https:\/\/raw\.githubusercontent\.com\/PoiSuKi\/Xray-script\/main\/install\.sh/,
+      /https:\/\/github\.com\/PoiSuKi\/Xray-script\/raw\/refs\/heads\/main\/install\.sh/,
     );
   }
 });

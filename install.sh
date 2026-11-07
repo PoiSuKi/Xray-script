@@ -466,7 +466,7 @@ function update_xray_script_files() {
 
 function check_xray_script_version() {
     # 定义 GitHub API URL 和本地版本文件路径
-    local script_config_github_url="https://raw.githubusercontent.com/PoiSuKi/Xray-script/main/config.json"
+    local script_config_github_url="https://github.com/PoiSuKi/Xray-script/raw/refs/heads/main/config.json"
     local is_update='n' # 初始化更新标志为 'n' (不更新)
 
     # 读取本地版本号
@@ -555,7 +555,7 @@ function main() {
     fi
     if [[ ! -f "${SCRIPT_CONFIG_PATH}" ]]; then
         local temp_config="${SCRIPT_CONFIG_PATH}.tmp.$$"
-        if ! wget -q -O "${temp_config}" https://raw.githubusercontent.com/PoiSuKi/Xray-script/main/config.json ||
+        if ! wget -q -O "${temp_config}" https://github.com/PoiSuKi/Xray-script/raw/refs/heads/main/config.json ||
             ! jq -e . "${temp_config}" >/dev/null 2>&1; then
             rm -f "${temp_config}"
             _error "${I18N_DATA['failed']}: config.json"
