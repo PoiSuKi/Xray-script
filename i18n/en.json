@@ -153,12 +153,16 @@
     }
   },
   "handler": {
+    "domain": {
+      "required": "SNI main and CDN domains cannot be empty"
+    },
     "script": {
       "config_update": "Updating script configuration"
     },
     "xray": {
       "config_update": "Updating Xray configuration",
-      "min_version": "XHTTP/Trojan/Fallback/SNI requires Xray v25.3.6 or later; current version: ${version}"
+      "min_version": "XHTTP/Trojan/Fallback/SNI requires Xray v25.3.6 or later; current version: ${version}",
+      "mkcp_min_version": "mKCP FinalMask requires Xray v26.6.1 or later; current version: ${version}"
     },
     "reality": {
       "read_failed": "Failed to read the current Xray configuration",
@@ -293,6 +297,7 @@
       "check": "Checking path validity: ",
       "valid": "Path format is valid: ",
       "empty": "Path is empty, will auto-generate random path",
+      "slash_error": "XHTTP paths must use complete path boundaries and cannot be the root path: ",
       "space_error": "Path cannot contain spaces: ",
       "length_error": "Path length cannot exceed 128 characters: ",
       "char_error": "Path contains invalid characters (only letters, digits, /, -, _, . allowed): ",
@@ -308,6 +313,7 @@
     },
     "domain": {
       "empty": "Input is empty, will randomly select a domain from config",
+      "required_error": "This domain cannot be empty",
       "format_error": "Invalid domain format: ",
       "resolve": "Resolving domain: ",
       "resolve_fail": "Domain resolution failed: ",
@@ -379,9 +385,13 @@
   "docker": {
     "install": {
       "start": "Installing Docker",
+      "download_fail": "Failed to download a valid official Docker installer",
       "centos8_fix": "Detected CentOS 8, fixing installation script compatibility",
       "dry_run": "Performing pre-installation check (dry-run)",
-      "running": "Running Docker installation script"
+      "dry_run_fail": "Docker pre-installation check failed",
+      "running": "Running Docker installation script",
+      "run_fail": "Docker installation script failed",
+      "verify_fail": "Docker installation script completed but Docker was not found"
     },
     "warp": {
       "build": {

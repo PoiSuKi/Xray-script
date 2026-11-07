@@ -23,15 +23,17 @@ test("handler uses current Xray installer options", () => {
   );
   assert.match(handler, /install_args\+=\(--force\)/);
   assert.match(handler, /handler_xray_runtime_compat/);
-  assert.match(handler, /needed_install|need_install=1/);
+  assert.match(handler, /XRAY_INSTALL_COMMIT=.*e42df6a/);
+  assert.match(handler, /XRAY_INSTALL_SHA256=.*954666bb/);
+  assert.match(handler, /function fetch_xray_installer/);
+  assert.match(handler, /function restore_xray_install_state/);
+  assert.match(handler, /installed_version#v.*!=.*target_version#v/);
   assert.match(
     handler,
-    /\[\[ -n "\$\{target_version\}" && "\$\{installed_version#v\}" != "\$\{target_version\}" \]\]/,
+    /handler_xray_version "\$\{xray_version\}" 'n'/,
   );
-  assert.match(
-    handler,
-    /installed_version="\$\(xray -version[\s\S]{0,220}\[\[ -z "\$\{target_version\}" \|\| "\$\{installed_version#v\}" == "\$\{target_version\}" \]\]/,
-  );
+  assert.match(handler, /select\(\.draft != true and \.prerelease != true\)/);
+  assert.doesNotMatch(handler, /Xray-install\/raw\/main\/install-release\.sh/);
 });
 
 test("protocol setup prepares the matching Xray version before persisting config", () => {
@@ -77,13 +79,15 @@ test("bootstrap and documentation use the fork repository", () => {
       readme,
       /https:\/\/github\.com\/PoiSuKi\/Xray-script\/raw\/refs\/heads\/main\/install\.sh/,
     );
+    assert.doesNotMatch(readme, /wget --no-check-certificate/);
   }
 });
 
 test("geodata updates delegate to the official installer", () => {
   const geodata = read("tool/geodata.sh");
 
-  assert.match(geodata, /@ update-geodata/);
+  assert.match(geodata, /bash -s -- update-geodata/);
+  assert.match(geodata, /XRAY_INSTALL_SHA256/);
   assert.doesNotMatch(geodata, /Loyalsoldier\/v2ray-rules-dat/);
 });
 
@@ -144,6 +148,45 @@ test("all Xray templates disable inbound sniffing by default", () => {
     read("core/handler.sh"),
     /select\(\.sniffing != null\) \| \.sniffing\.enabled\) = false/,
   );
+});
+
+test("mKCP uses current FinalMask format and shared seed extraction", () => {
+  const template = JSON.parse(read("config/xray/mKCP.json"));
+  const stream = template.inbounds[1].streamSettings;
+  const handler = read("core/handler.sh");
+  const share = read("core/share.sh");
+
+  assert.equal(stream.kcpSettings.seed, undefined);
+  assert.equal(stream.finalmask.udp[0].type, "mkcp-legacy");
+  assert.equal(stream.finalmask.udp[0].settings.value, "{{ speed }}");
+  assert.match(
+    handler,
+    /streamSettings\.finalmask\.udp\[0\]\.settings\.value = \$seed/,
+  );
+  assert.match(share, /select\(\.type == "mkcp-legacy"\).*settings\.value/);
+  assert.match(share, /kcpSettings\.seed/);
+  assert.match(share, /seed=\$\{seed_encoded\}&headerType=none/);
+});
+
+test("Xray config validation disables file logging in the temporary copy", () => {
+  const handler = read("core/handler.sh");
+
+  assert.match(handler, /function validate_xray_config/);
+  assert.match(handler, /\.log\.access = "none".*\.log\.error = "none"/);
+  assert.match(handler, /validate_xray_config "\$\{temp_file\}"/);
+  assert.match(handler, /validate_xray_config "\$\{new_config\}"/);
+});
+
+test("Xray config reset and random generator failures propagate", () => {
+  const handler = read("core/handler.sh");
+  const generator = read("core/generate.sh");
+  const x25519 = functionBody(handler, "handler_x25519_config");
+
+  assert.match(handler, /handler_reset_script_config 'xray' 'n' \|\| return 1/);
+  assert.match(x25519, /X25519=.*\|\| return 1/);
+  assert.match(generator, /random=.*\| return 1/);
+  assert.match(generator, /uuid=.*\| return 1/);
+  assert.match(generator, /generate_random_string/);
 });
 
 test("client output uses Mihomo transport names and ML-KEM hint", () => {
@@ -263,10 +306,38 @@ test("custom UUID input is preserved as one generator argument", () => {
   assert.match(generator, /generate_uuid_from_string/);
   assert.match(generator, /sha1/);
   assert.match(check, /uuid_bytes/);
+  assert.doesNotMatch(generator, /\\b-\[0-9a-fA-F\]/);
+  assert.doesNotMatch(check, /\\b-\[0-9a-fA-F\]/);
   assert.match(
     handler,
     /uuid \| fallback\)[\s\S]{0,180}exec_check '--uuid' "\$\{result\}" \|\| continue/,
   );
+});
+
+test("port validation rejects oversized numeric input before arithmetic", () => {
+  const check = read("core/check.sh");
+
+  assert.match(check, /port.*\^\[0-9\]\{1,5\}\$/);
+  assert.match(check, /10#\$\{port\} >= 1/);
+});
+
+test("XHTTP paths are normalized and enforced at slash boundaries", () => {
+  const check = read("core/check.sh");
+  const generate = read("core/generate.sh");
+  const handler = read("core/handler.sh");
+  const templates = ["XHTTP.json", "Trojan.json", "Fallback.json", "SNI.json"];
+
+  assert.match(check, /"\$\{path\}" != \/\* \|\| "\$\{path\}" != \*\/ \|\| "\$\{path\}" == '\/'/);
+  assert.match(generate, /echo "\/\$\{domain_path\}\/"/);
+  assert.match(handler, /result="\$\{result\}\/"/);
+  for (const template of templates) {
+    const document = JSON.parse(read(`config/xray/${template}`));
+    const paths = document.inbounds
+      .map((inbound) => inbound.streamSettings?.xhttpSettings?.path)
+      .filter(Boolean);
+    assert.ok(paths.length > 0, `${template} should contain an XHTTP inbound`);
+    assert.ok(paths.every((value) => value === "/yourpath/"), template);
+  }
 });
 
 test("terminal client output includes the REALITY ML-KEM flag", () => {
@@ -411,9 +482,26 @@ test("default routing rules are generated in memory before one validated write",
 
 test("Cloudreve compose operations fail before destructive cleanup", () => {
   const docker = read("service/docker.sh");
+  const v3 = read("config/cloudreve/v3/docker-compose.yaml");
+  const v4 = read("config/cloudreve/v4/docker-compose.yaml");
+  const v4Watchtower = read("config/cloudreve/v4/docker-compose.watchtower.yaml");
 
+  assert.match(v3, /"127\.0\.0\.1:5212:5212"/);
+  assert.match(v4, /"127\.0\.0\.1:5212:5212"/);
+  assert.match(v4Watchtower, /"127\.0\.0\.1:5212:5212"/);
+  assert.doesNotMatch(v4Watchtower, /image: postgres:latest/);
+  assert.doesNotMatch(v4, /127\.0\.0\.1:6888/);
   assert.match(docker, /docker compose up -d \|\| print_error/);
   assert.match(docker, /docker compose down \|\| print_error/);
+  assert.match(docker, /docker compose pull \|\| print_error/);
+  assert.match(
+    docker,
+    /docker compose up -d --remove-orphans \|\| print_error "failed to update Cloudreve v4"/,
+  );
+  assert.doesNotMatch(
+    docker,
+    /docker compose pull[\s\S]{0,220}docker compose down/,
+  );
   assert.match(
     docker,
     /\(cd "\$\{CLOUDREVE_V3_DIR\}" && docker compose down\) \|\|[\s\S]{0,100}print_error/,
@@ -422,6 +510,26 @@ test("Cloudreve compose operations fail before destructive cleanup", () => {
     docker,
     /\(cd "\$\{CLOUDREVE_V4_DIR\}" && docker compose down\) \|\|[\s\S]{0,100}print_error/,
   );
+});
+
+test("download-and-execute installers stage complete validated files", () => {
+  const docker = read("service/docker.sh");
+  const ssl = read("service/ssl.sh");
+  const i18nZh = JSON.parse(read("i18n/zh.json"));
+  const i18nEn = JSON.parse(read("i18n/en.json"));
+
+  assert.match(docker, /installer_file="\$\(mktemp\)"/);
+  assert.doesNotMatch(docker, /TOOL_DIR}\/install-docker\.sh/);
+  assert.match(docker, /sh -n "\$\{installer_file\}"/);
+  assert.match(docker, /cmd_exists docker \|\| print_error/);
+  for (const key of ["download_fail", "dry_run_fail", "run_fail", "verify_fail"]) {
+    assert.equal(typeof i18nZh.docker.install[key], "string");
+    assert.equal(typeof i18nEn.docker.install[key], "string");
+  }
+
+  assert.match(ssl, /installer_file="\$\(mktemp\)"/);
+  assert.match(ssl, /curl -fsSL[\s\S]{0,180}https:\/\/get\.acme\.sh -o/);
+  assert.match(ssl, /sh -n "\$\{installer_file\}"/);
 });
 
 test("Nginx uses an unprivileged worker and preserves the system link", () => {
@@ -455,6 +563,7 @@ test("Nginx uses an unprivileged worker and preserves the system link", () => {
     /function ensure_nginx_runtime_user\(\)[\s\S]{0,240}getent group xray[\s\S]{0,160}groupadd --system xray/,
   );
   assert.match(nginx, /function configure_nginx_worker_user/);
+  assert.doesNotMatch(nginx, /--no-check-certificate/);
   assert.match(
     nginx,
     /printf 'user nginx xray;\\n'[\s\S]{0,700}mv -f "\$\{temp_conf\}" "\$\{nginx_conf\}"/,
@@ -490,12 +599,32 @@ test("port changes participate in the Xray config transaction", () => {
 
   assert.match(changePort, /begin_script_config_transaction/);
   assert.match(changePort, /persist_script_config/);
+  assert.doesNotMatch(changePort, /handler_restart/);
+  assert.match(
+    handler,
+    /--change-port\)[\s\S]{0,180}handler_xray_config \|\| exit 1[\s\S]{0,120}handler_restart \|\| exit 1/,
+  );
 });
 
 test("top-level domain changes join the Xray config transaction", () => {
   const handler = read("core/handler.sh");
   const changeDomain = functionBody(handler, "handler_change_domain");
+  const check = read("core/check.sh");
 
   assert.match(changeDomain, /stop_cert_service[\s\S]{0,220}begin_script_config_transaction/);
+  assert.match(changeDomain, /-z "\$\{new_domain\}"[\s\S]{0,220}handler\.domain\.required/);
   assert.match(changeDomain, /persist_script_config \|\| return 1/);
+  assert.match(handler, /cdn\)[\s\S]{0,180}exec_check '--required-domain'/);
+  assert.match(check, /--required-domain\) check_domain_security "\$\{1\}" 'y'/);
+});
+
+test("failed multi-step handlers roll back pending script transactions", () => {
+  const main = read("core/main.sh");
+  const handler = read("core/handler.sh");
+
+  assert.match(
+    main,
+    /if \[\[ \$\{exit_code\} -ne 0 \]\]; then[\s\S]{0,180}--rollback-script-config[\s\S]{0,120}_error/,
+  );
+  assert.match(handler, /--rollback-script-config\) rollback_script_config_transaction/);
 });

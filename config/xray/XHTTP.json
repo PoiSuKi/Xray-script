@@ -90,7 +90,7 @@
         },
         "xhttpSettings": {
           "host": "",
-          "path": "/yourpath",
+          "path": "/yourpath/",
           "mode": "auto"
         }
       },

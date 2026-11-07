@@ -153,12 +153,16 @@
     }
   },
   "handler": {
+    "domain": {
+      "required": "SNI 主域名和 CDN 域名均不能为空"
+    },
     "script": {
       "config_update": "正在更新脚本配置"
     },
     "xray": {
       "config_update": "正在更新 Xray 配置",
-      "min_version": "XHTTP/Trojan/Fallback/SNI 配置要求 Xray v25.3.6 或更高版本，当前为 ${version}"
+      "min_version": "XHTTP/Trojan/Fallback/SNI 配置要求 Xray v25.3.6 或更高版本，当前为 ${version}",
+      "mkcp_min_version": "mKCP FinalMask 配置要求 Xray v26.6.1 或更高版本，当前为 ${version}"
     },
     "reality": {
       "read_failed": "读取当前 Xray 配置失败",
@@ -293,6 +297,7 @@
       "check": "正在检查路径合法性：",
       "valid": "路径格式合法：",
       "empty": "路径为空，将自动生成随机路径",
+      "slash_error": "XHTTP 路径必须位于完整的路径边界（不能是根路径）：",
       "space_error": "路径不能包含空格：",
       "length_error": "路径长度不能超过 128 个字符：",
       "char_error": "路径包含非法字符（只允许字母、数字、斜杠、连字符、下划线、点）：",
@@ -308,6 +313,7 @@
     },
     "domain": {
       "empty": "输入值为空，将随机在配置中选择一个目标域名",
+      "required_error": "该域名不能为空",
       "format_error": "域名格式不合法：",
       "resolve": "正在解析域名：",
       "resolve_fail": "域名解析失败：",
@@ -378,9 +384,13 @@
   "docker": {
     "install": {
       "start": "正在安装 Docker",
+      "download_fail": "Docker 官方安装脚本下载失败或内容无效",
       "centos8_fix": "检测到 CentOS 8，正在修复安装脚本兼容性问题",
       "dry_run": "执行安装前检查（dry-run）",
-      "running": "正在运行 Docker 安装脚本"
+      "dry_run_fail": "Docker 安装前检查失败",
+      "running": "正在运行 Docker 安装脚本",
+      "run_fail": "Docker 安装脚本执行失败",
+      "verify_fail": "Docker 安装脚本执行完成，但未检测到 Docker"
     },
     "warp": {
       "build": {

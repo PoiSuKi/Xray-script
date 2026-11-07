@@ -199,6 +199,8 @@ function set_default_ca() {
 # 返回值: 无 (安装成功或失败后退出)
 # =============================================================================
 function install_acme_sh() {
+    local installer_file=''
+
     # 检查 acme.sh 是否已经安装
     if [[ -e "${HOME}/.acme.sh/acme.sh" ]]; then
         print_info "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.install.already_installed")"
@@ -209,8 +211,27 @@ function install_acme_sh() {
     print_info "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.install.start")"
     resolve_ca_server
 
-    # 使用 curl 下载并运行 acme.sh 安装脚本，设置账户邮箱
-    curl https://get.acme.sh | sh -s email="${ACCOUNT_EMAIL}" || print_error "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.install.fail_download")"
+    installer_file="$(mktemp)" || print_error "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.install.fail_download")"
+    trap 'rm -f -- "${installer_file:-}"' EXIT
+
+    # 先完整下载并校验，再交给 shell 执行，避免网络中断时执行截断的安装器。
+    if ! curl -fsSL --retry 5 --retry-delay 2 --connect-timeout 15 --max-time 300 \
+        https://get.acme.sh -o "${installer_file}" ||
+        [[ ! -s "${installer_file}" ]] ||
+        ! sh -n "${installer_file}"; then
+        rm -f -- "${installer_file}"
+        trap - EXIT
+        print_error "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.install.fail_download")"
+    fi
+
+    sh "${installer_file}" email="${ACCOUNT_EMAIL}" ||
+        {
+            rm -f -- "${installer_file}"
+            trap - EXIT
+            print_error "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.install.fail_download")"
+        }
+    rm -f -- "${installer_file}"
+    trap - EXIT
 
     # 启用 acme.sh 的自动升级功能
     "${HOME}/.acme.sh/acme.sh" --upgrade --auto-upgrade || print_error "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.install.fail_autoupgrade")"

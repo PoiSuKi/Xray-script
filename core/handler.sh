@@ -69,10 +69,13 @@ readonly GEODATA_PATH="${TOOL_DIR}/geodata.sh"  # GeoData 更新脚本
 readonly BBR_PATH="${TOOL_DIR}/bbr.sh"          # BBR 管理脚本
 # 定义外部配置文件和脚本的路径
 readonly XRAY_CONFIG_PATH="/usr/local/etc/xray/config.json"    # Xray 最终配置文件路径
+readonly XRAY_BIN_PATH="/usr/local/bin/xray"                   # Xray 可执行文件路径
 readonly SCRIPT_CONFIG_PATH="${SCRIPT_CONFIG_DIR}/config.json" # 脚本主配置文件路径
 readonly SCRIPT_CONFIG_TRANSACTION_BACKUP="${SCRIPT_CONFIG_PATH}.xray-config-transaction.bak"
 readonly ACME_PATH="${HOME}/.acme.sh/acme.sh"                  # ACME.sh 脚本路径
-readonly XRAY_INSTALL_URL="https://github.com/XTLS/Xray-install/raw/main/install-release.sh"
+readonly XRAY_INSTALL_COMMIT="e42df6a772e60dd7b058f852262c4dbeb0bc231d"
+readonly XRAY_INSTALL_SHA256="954666bb028ba8561b2218372b7db76ba051f8252b2db9195321e672263aab94"
+readonly XRAY_INSTALL_URL="https://raw.githubusercontent.com/XTLS/Xray-install/${XRAY_INSTALL_COMMIT}/install-release.sh"
 
 # --- 全局变量声明 ---
 # 声明用于存储配置数据和国际化数据的全局变量
@@ -289,7 +292,7 @@ function exec_read() {
             ;;
         cdn)
             # CDN 域名允许解析到代理服务商，但仍需支持 TLS 1.3 与 H2
-            exec_check '--domain' "${result}" || continue
+            exec_check '--required-domain' "${result}" || continue
             ;;
         custom-domain)
             exec_check '--custom-domain' "${result}" "${CONFIG_DATA['ignore-domain']}" || continue
@@ -319,9 +322,10 @@ function exec_read() {
             CONFIG_DATA['short_ids']="${valid_short_ids}"
             ;;
         path)
-            # 统一补全前导斜杠，避免服务端和客户端路径不一致
-            if [[ -n "${result}" && "${result}" != /* ]]; then
-                result="/${result}"
+            # XHTTP 路径必须有结束边界，同时兼容用户省略首尾斜杠的输入。
+            if [[ -n "${result}" ]]; then
+                [[ "${result}" == /* ]] || result="/${result}"
+                [[ "${result}" == */ ]] || result="${result}/"
             fi
             exec_check '--path' "${result}" || continue
             ;;
@@ -672,6 +676,28 @@ function get_custom_site_json_by_index() {
     echo "${SCRIPT_CONFIG}" | jq -c --argjson idx "$((site_index - 1))" '.nginx.custom_sites // [] | .[$idx]'
 }
 
+function fetch_xray_installer() {
+    local content=''
+    local digest=''
+
+    content="$(curl -fsSL --retry 5 --retry-delay 2 --connect-timeout 15 --max-time 300 "${XRAY_INSTALL_URL}")" ||
+        return 1
+    [[ -n "${content}" ]] || return 1
+    digest="$(printf '%s\n' "${content}" | sha256sum | awk '{print $1}')" || return 1
+    [[ "${digest}" == "${XRAY_INSTALL_SHA256}" ]] || return 1
+    bash -n <<<"${content}" || return 1
+    printf '%s\n' "${content}"
+}
+
+function validate_xray_config()(
+    local config_path="$1"
+    local validation_file="${config_path}.validate.$$.json"
+
+    trap 'rm -f -- "${validation_file}"' EXIT
+    jq '.log.access = "none" | .log.error = "none"' "${config_path}" >"${validation_file}" || return 1
+    xray run -test -config "${validation_file}"
+)
+
 function write_xray_config() {
     local config_json="${1:-${XRAY_CONFIG}}"
     local temp_file="${XRAY_CONFIG_PATH}.tmp.$$.json"
@@ -684,7 +710,7 @@ function write_xray_config() {
         rm -f "${temp_file}"
         return 1
     fi
-    if cmd_exists 'xray' && ! xray run -test -config "${temp_file}" >/dev/null 2>&1; then
+    if cmd_exists 'xray' && ! validate_xray_config "${temp_file}" >/dev/null 2>&1; then
         rm -f "${temp_file}"
         return 1
     fi
@@ -837,19 +863,21 @@ function handler_routing() {
 # =============================================================================
 function handler_reset_script_config() {
     local TARGET_CONFIG="${1:-xray}" # 获取目标配置部分，默认为 xray
+    local persist_result="${2:-y}"
     # 根据目标配置部分调用 reset_json_fields 进行重置
     case "${TARGET_CONFIG,,}" in
     xray)
         # 重置 xray 部分，保留 version, warp, rules 字段
-        SCRIPT_CONFIG=$(reset_json_fields "${SCRIPT_CONFIG}" 'xray' 'version' 'warp' 'rules')
+        SCRIPT_CONFIG="$(reset_json_fields "${SCRIPT_CONFIG}" 'xray' 'version' 'warp' 'rules')" || return 1
         ;;
     nginx)
         # 重置 nginx 部分，保留 version, ca, ca_server 字段
-        SCRIPT_CONFIG=$(reset_json_fields "${SCRIPT_CONFIG}" 'nginx' 'version' 'ca' 'ca_server')
+        SCRIPT_CONFIG="$(reset_json_fields "${SCRIPT_CONFIG}" 'nginx' 'version' 'ca' 'ca_server')" || return 1
         ;;
     esac
+    [[ "${persist_result}" == 'n' ]] && return 0
     # 将重置后的脚本配置写入文件
-    echo "${SCRIPT_CONFIG}" >"${SCRIPT_CONFIG_PATH}" && sleep 2
+    persist_script_config
 }
 
 function handler_ca_server() {
@@ -946,6 +974,14 @@ function version_ge() {
     [[ "$(printf '%s\n' "${current}" "${required}" | sort -V | tail -n 1)" == "${current}" ]]
 }
 
+function normalize_xray_version() {
+    local version="${1:-}"
+
+    [[ "${version}" =~ ^[vV]?[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]] || return 1
+    version="${version#[vV]}"
+    printf 'v%s\n' "${version}"
+}
+
 function handler_check_protocol_version() {
     local config_tag="${1:-${CONFIG_DATA['tag']}}"
     local requested_version="$(echo "${SCRIPT_CONFIG}" | jq -r '.xray.version // empty')"
@@ -956,6 +992,11 @@ function handler_check_protocol_version() {
             _error "$(echo "$I18N_DATA" | jq -r --arg version "${requested_version}" '.handler.xray.min_version | sub("\\$\\{version\\}"; $version)')"
         fi
         ;;
+    mkcp)
+        if [[ -n "${requested_version}" ]] && ! version_ge "${requested_version}" 'v26.6.1'; then
+            _error "$(echo "$I18N_DATA" | jq -r --arg version "${requested_version}" '.handler.xray.mkcp_min_version | sub("\\$\\{version\\}"; $version)')"
+        fi
+        ;;
     esac
 }
 
@@ -964,7 +1005,7 @@ function handler_script_config() {
     # 打印绿色的配置更新提示
     echo -e "${GREEN}[$(echo "$I18N_DATA" | jq -r '.title.config')]${NC} $(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.script.config_update")" >&2
     # 重置脚本配置 (默认重置 xray 部分)
-    handler_reset_script_config
+    handler_reset_script_config 'xray' 'n' || return 1
     # 从 CONFIG_DATA 或生成器获取配置值
     # 获取配置标签
     local CONFIG_TAG="${1:-${CONFIG_DATA['tag']}}"
@@ -979,86 +1020,131 @@ function handler_script_config() {
     local XRAY_RULES_AD="${CONFIG_DATA['block-ad']}"
     # 获取端口，默认 443
     local XRAY_PORT="${CONFIG_DATA['port']:-443}"
-    # 获取或生成 UUID
-    local XRAY_UUID="$(exec_generate '--uuid' "${CONFIG_DATA['uuid']}")"
-    # 获取或生成 Fallback UUID
-    local FALLBACK_UUID="${CONFIG_DATA['fallback']:-$(exec_generate '--uuid')}"
-    # 获取或生成 Trojan 密码
-    local TROJAN_PASSWORD="${CONFIG_DATA['password']:-$(exec_generate '--password')}"
-    # 获取或生成 mKCP Seed
-    local KCP_SEED="${CONFIG_DATA['seed']:-$(exec_generate '--password')}"
-    # 获取或生成 XHTTP 路径
-    local XHTTP_PATH="${CONFIG_DATA['path']:-$(exec_generate '--path')}"
-    # 获取或生成目标域名
-    local TARGET_DOMAIN="${CONFIG_DATA['target']:-$(exec_generate '--target')}"
-    # 生成服务器名称列表
-    local SERVER_NAMES="$(exec_generate '--server-names' "${TARGET_DOMAIN}")"
+    local XRAY_UUID=''
+    local FALLBACK_UUID=''
+    local TROJAN_PASSWORD=''
+    local KCP_SEED=''
+    local XHTTP_PATH=''
+    local TARGET_DOMAIN=''
+    local SERVER_NAMES='[]'
+    local SHORT_IDS='[]'
+
+    # 只读取当前协议真正需要的字段，避免无关生成器失败阻断安装。
+    case "${CONFIG_TAG,,}" in
+    mkcp | vision | xhttp | fallback | sni)
+        XRAY_UUID="$(exec_generate '--uuid' "${CONFIG_DATA['uuid']}")" || return 1
+        ;;
+    esac
+    case "${CONFIG_TAG,,}" in
+    fallback | sni)
+        FALLBACK_UUID="$(exec_generate '--uuid' "${CONFIG_DATA['fallback']}")" || return 1
+        ;;
+    esac
+    case "${CONFIG_TAG,,}" in
+    trojan)
+        if [[ -n "${CONFIG_DATA['password']}" ]]; then
+            TROJAN_PASSWORD="${CONFIG_DATA['password']}"
+        else
+            TROJAN_PASSWORD="$(exec_generate '--password')" || return 1
+        fi
+        ;;
+    mkcp)
+        if [[ -n "${CONFIG_DATA['seed']}" ]]; then
+            KCP_SEED="${CONFIG_DATA['seed']}"
+        else
+            KCP_SEED="$(exec_generate '--password')" || return 1
+        fi
+        ;;
+    esac
+    case "${CONFIG_TAG,,}" in
+    xhttp | trojan | fallback | sni)
+        if [[ -n "${CONFIG_DATA['path']}" ]]; then
+            XHTTP_PATH="${CONFIG_DATA['path']}"
+        else
+            XHTTP_PATH="$(exec_generate '--path')" || return 1
+        fi
+        ;;
+    esac
+    case "${CONFIG_TAG,,}" in
+    vision | xhttp | trojan | fallback | sni)
+        if [[ -n "${CONFIG_DATA['target']}" ]]; then
+            TARGET_DOMAIN="${CONFIG_DATA['target']}"
+        else
+            TARGET_DOMAIN="$(exec_generate '--target')" || return 1
+        fi
+        [[ -n "${TARGET_DOMAIN}" ]] || return 1
+        SERVER_NAMES="$(exec_generate '--server-names' "${TARGET_DOMAIN}")" || return 1
+        SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --arg target "${TARGET_DOMAIN}" --argjson names "${SERVER_NAMES}" \
+            '.target = ((.target // {}) | .[$target] = $names)')" || return 1
+        SHORT_IDS="$(exec_generate '--short-ids' ${CONFIG_DATA['short_ids']:-'8 8'})" || return 1
+        ;;
+    esac
     # 获取 CDN 域名
     local CDN_DOMAIN="${CONFIG_DATA['cdn']}"
-    # 获取或生成 Short IDs
-    local SHORT_IDS="$(exec_generate '--short-ids' ${CONFIG_DATA['short_ids']:-'8 8'})"
     # 获取 CA 邮箱
     local CA_EMAIL="${CONFIG_DATA['email']}"
     # 更新脚本配置中的规则状态
-    SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --arg reset "${XRAY_RULES_STATUS,,}" ' if $reset != "n" then .xray.rules.reset = 1 else .xray.rules.reset = 0 end ')"
+    SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --arg reset "${XRAY_RULES_STATUS,,}" ' if $reset != "n" then .xray.rules.reset = 1 else .xray.rules.reset = 0 end ')" || return 1
     # 更新脚本配置中的 block bt 状态
-    SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --arg bt "${XRAY_RULES_BT,,}" ' if $bt != "n" then .xray.rules.bt = 1 else .xray.rules.bt = 0 end ')"
+    SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --arg bt "${XRAY_RULES_BT,,}" ' if $bt != "n" then .xray.rules.bt = 1 else .xray.rules.bt = 0 end ')" || return 1
     # 更新脚本配置中的 block cn 状态
-    SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --arg cn "${XRAY_RULES_CN,,}" ' if $cn != "n" then .xray.rules.cn = 1 else .xray.rules.cn = 0 end ')"
+    SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --arg cn "${XRAY_RULES_CN,,}" ' if $cn != "n" then .xray.rules.cn = 1 else .xray.rules.cn = 0 end ')" || return 1
     # 更新脚本配置中的 block ad 状态
-    SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --arg ad "${XRAY_RULES_AD,,}" ' if $ad != "n" then .xray.rules.ad = 1 else .xray.rules.ad = 0 end ')"
+    SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --arg ad "${XRAY_RULES_AD,,}" ' if $ad != "n" then .xray.rules.ad = 1 else .xray.rules.ad = 0 end ')" || return 1
     # 根据配置标签更新特定字段
     case "${CONFIG_TAG,,}" in
     trojan)
         # 更新 Trojan 密码
-        SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --arg password "${TROJAN_PASSWORD}" '.xray.trojan = $password')"
+        SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --arg password "${TROJAN_PASSWORD}" '.xray.trojan = $password')" || return 1
         ;;
     mkcp | vision | xhttp | fallback | sni)
         # 更新 UUID
-        SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --arg uuid "${XRAY_UUID}" '.xray.uuid = $uuid')"
+        SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --arg uuid "${XRAY_UUID}" '.xray.uuid = $uuid')" || return 1
         ;;
     esac
     # 根据配置标签更新特定字段 (第二部分)
     case "${CONFIG_TAG,,}" in
     fallback)
         # 更新 Fallback UUID
-        SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --arg uuid "${FALLBACK_UUID}" '.xray.fallback = $uuid')"
+        SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --arg uuid "${FALLBACK_UUID}" '.xray.fallback = $uuid')" || return 1
         ;;
     mkcp)
         # 为 mKCP 生成随机端口并更新 Seed
-        XRAY_PORT="$(exec_generate '--port')"
-        SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --arg seed "${KCP_SEED}" '.xray.kcp = $seed')"
+        XRAY_PORT="$(exec_generate '--port')" || return 1
+        SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --arg seed "${KCP_SEED}" '.xray.kcp = $seed')" || return 1
         ;;
     sni)
         # 更新 Fallback UUID
-        SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --arg uuid "${FALLBACK_UUID}" '.xray.fallback = $uuid')"
+        SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --arg uuid "${FALLBACK_UUID}" '.xray.fallback = $uuid')" || return 1
         # 为 SNI 更新 CA 邮箱、域名和 CDN
-        [[ -n "${CA_EMAIL}" ]] && SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --arg ca "${CA_EMAIL}" '.nginx.ca = $ca')"
-        SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --arg domain "${TARGET_DOMAIN}" '.nginx.domain = $domain')"
-        SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --arg cdn "${CDN_DOMAIN}" '.nginx.cdn = $cdn')"
+        if [[ -n "${CA_EMAIL}" ]]; then
+            SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --arg ca "${CA_EMAIL}" '.nginx.ca = $ca')" || return 1
+        fi
+        SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --arg domain "${TARGET_DOMAIN}" '.nginx.domain = $domain')" || return 1
+        SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --arg cdn "${CDN_DOMAIN}" '.nginx.cdn = $cdn')" || return 1
         ;;
     esac
     # 根据配置标签更新特定字段 (第三部分)
     case "${CONFIG_TAG,,}" in
     xhttp | trojan | fallback | sni)
         # 更新路径
-        SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --arg path "${XHTTP_PATH}" '.xray.path = $path')"
+        SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --arg path "${XHTTP_PATH}" '.xray.path = $path')" || return 1
         ;;
     esac
     # 根据配置标签更新特定字段 (第四部分)
     case "${CONFIG_TAG,,}" in
     vision | xhttp | trojan | fallback | sni)
         # 更新目标域名、服务器名称和 Short IDs
-        SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --arg target "${TARGET_DOMAIN}" '.xray.target = $target')"
-        SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --argjson serverNames "${SERVER_NAMES}" '.xray.serverNames = $serverNames')"
-        SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --argjson shortIds "${SHORT_IDS}" '.xray.shortIds = $shortIds')"
+        SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --arg target "${TARGET_DOMAIN}" '.xray.target = $target')" || return 1
+        SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --argjson serverNames "${SERVER_NAMES}" '.xray.serverNames = $serverNames')" || return 1
+        SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --argjson shortIds "${SHORT_IDS}" '.xray.shortIds = $shortIds')" || return 1
         ;;
     esac
     # 更新配置标签和端口
-    SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --arg tag "${CONFIG_TAG}" '.xray.tag = $tag')"
-    SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --argjson port "${XRAY_PORT}" '.xray.port = $port')"
+    SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --arg tag "${CONFIG_TAG}" '.xray.tag = $tag')" || return 1
+    SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --argjson port "${XRAY_PORT}" '.xray.port = $port')" || return 1
     # 将更新后的脚本配置写入文件
-    echo "${SCRIPT_CONFIG}" >"${SCRIPT_CONFIG_PATH}" && sleep 2
+    persist_script_config
 }
 
 # =============================================================================
@@ -1073,13 +1159,18 @@ function handler_x25519_config() {
     # 打印绿色的配置更新提示
     echo -e "${GREEN}[$(echo "$I18N_DATA" | jq -r '.title.config')]${NC} $(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.script.config_update")" >&2
     # 生成 X25519 密钥对
-    local X25519="$(exec_generate '--x25519')"
+    local X25519=''
+    X25519="$(exec_generate '--x25519')" || return 1
     # 提取私钥
-    local PRIVATE_KEY="$(echo "${X25519}" | awk -F, '{print $1}')"
+    local PRIVATE_KEY=''
+    PRIVATE_KEY="$(echo "${X25519}" | awk -F, '{print $1}')" || return 1
     # 提取公钥
-    local PUBLIC_KEY="$(echo "${X25519}" | awk -F, '{print $2}')"
+    local PUBLIC_KEY=''
+    PUBLIC_KEY="$(echo "${X25519}" | awk -F, '{print $2}')" || return 1
     # 提取 Hash32
-    local HASH32="$(echo "${X25519}" | awk -F, '{print $3}')"
+    local HASH32=''
+    HASH32="$(echo "${X25519}" | awk -F, '{print $3}')" || return 1
+    [[ -n "${PRIVATE_KEY}" && -n "${PUBLIC_KEY}" && -n "${HASH32}" ]] || return 1
     # 私钥已写入权限受控的脚本配置，不在终端输出，避免被截图或日志泄露。
     printf '%b[Public Key]%b %s\n' "${GREEN}" "${NC}" "${PUBLIC_KEY}" >&2
     printf '%b[Hash32]%b %s\n' "${GREEN}" "${NC}" "${HASH32}" >&2
@@ -1134,7 +1225,17 @@ function handler_xray_config() {
         installed_version="$(xray -version 2>/dev/null | awk 'NR == 1 {print $2}')"
         if [[ -z "${installed_version}" ]] || ! version_ge "${installed_version}" 'v25.3.6'; then
             rollback_script_config_transaction || true
+            rm -f "${xray_config_backup}"
             _error "$(echo "$I18N_DATA" | jq -r --arg version "${installed_version:-unknown}" '.handler.xray.min_version | sub("\\$\\{version\\}"; $version)')"
+        fi
+        ;;
+    mkcp)
+        local installed_version=''
+        installed_version="$(xray -version 2>/dev/null | awk 'NR == 1 {print $2}')"
+        if [[ -z "${installed_version}" ]] || ! version_ge "${installed_version}" 'v26.6.1'; then
+            rollback_script_config_transaction || true
+            rm -f "${xray_config_backup}"
+            _error "$(echo "$I18N_DATA" | jq -r --arg version "${installed_version:-unknown}" '.handler.xray.mkcp_min_version | sub("\\$\\{version\\}"; $version)')"
         fi
         ;;
     esac
@@ -1170,7 +1271,8 @@ function handler_xray_config() {
     case "${CONFIG_TAG,,}" in
     mkcp)
         # 更新 mKCP Seed
-        XRAY_CONFIG="$(echo "${XRAY_CONFIG}" | jq --arg seed "${KCP_SEED}" '.inbounds[1].streamSettings.kcpSettings.seed = $seed')"
+        XRAY_CONFIG="$(echo "${XRAY_CONFIG}" | jq --arg seed "${KCP_SEED}" \
+            '.inbounds[1].streamSettings.finalmask.udp[0].settings.value = $seed')"
         ;;
     vision | xhttp | trojan | fallback | sni)
         # 如果不是 sni 配置，更新 Reality 目标
@@ -1590,25 +1692,32 @@ function handler_custom_sites() {
 # 返回值: 无 (直接修改 CONFIG_DATA 和 SCRIPT_CONFIG 全局变量)
 # =============================================================================
 function handler_xray_version() {
-    local xray_version="$1" # 获取版本指定参数
+    local xray_version="${1:-release}"
+    local persist="${2:-y}"
+    local release_data=''
     # 根据版本指定参数确定具体版本
     case "${xray_version,,}" in
     latest)
-        # 获取最新的 Xray 版本
-        CONFIG_DATA['version']="$(curl -fsSL --retry 5 --retry-delay 2 https://api.github.com/repos/XTLS/Xray-core/releases |
-            jq -r '.[0].tag_name // empty')" || return 1
+        release_data="$(curl -fsSL --retry 5 --retry-delay 2 --connect-timeout 15 --max-time 60 \
+            https://api.github.com/repos/XTLS/Xray-core/releases)" || return 1
+        CONFIG_DATA['version']="$(printf '%s\n' "${release_data}" |
+            jq -er '[.[] | select(.draft != true and .prerelease != true)] | sort_by(.published_at) | reverse | .[0].tag_name | strings')" || return 1
         ;;
     custom)
         # 读取用户自定义的版本
-        exec_read 'version'
+        exec_read 'version' || return 1
+        ;;
+    release | '')
+        release_data="$(curl -fsSL --retry 5 --retry-delay 2 --connect-timeout 15 --max-time 60 \
+            https://api.github.com/repos/XTLS/Xray-core/releases/latest)" || return 1
+        CONFIG_DATA['version']="$(printf '%s\n' "${release_data}" | jq -er '.tag_name | strings')" || return 1
         ;;
     *)
-        # 获取最新的 release 版本
-        CONFIG_DATA['version']="$(curl -fsSL --retry 5 --retry-delay 2 https://api.github.com/repos/XTLS/Xray-core/releases/latest |
-            jq -r '.tag_name // empty')" || return 1
+        CONFIG_DATA['version']="${xray_version}"
         ;;
     esac
-    [[ -n "${CONFIG_DATA['version']}" ]] || return 1
+    CONFIG_DATA['version']="$(normalize_xray_version "${CONFIG_DATA['version']:-}")" || return 1
+    [[ "${persist,,}" == 'n' ]] && return 0
     # 更新脚本配置中的 Xray 版本
     SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --arg xray "${CONFIG_DATA['version']}" '.xray.version = $xray')" || return 1
     # 将更新后的脚本配置写入文件
@@ -1645,7 +1754,7 @@ function handler_change_xray_port() {
 
     # 更新脚本配置中的 Xray 端口
     SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --argjson port "${XRAY_PORT}" '.xray.port = $port')" || return 1
-    # 将更新后的脚本配置写入文件
+    # 运行配置和重启由主流程继续处理，成功后再提交整个事务。
     persist_script_config
 }
 
@@ -1691,7 +1800,7 @@ function handler_change_reality_domain() {
         _error "$(echo "$I18N_DATA" | jq -r '.handler.reality.update_failed')"
     fi
 
-    if ! xray run -test -config "${new_config}" >/dev/null 2>&1; then
+    if ! validate_xray_config "${new_config}" >/dev/null 2>&1; then
         rm -f "${new_config}" "${config_backup}" "${script_backup}"
         _error "$(echo "$I18N_DATA" | jq -r '.handler.reality.invalid_config')"
     fi
@@ -1778,43 +1887,126 @@ function handler_xray_runtime_compat() {
 #   $2: force_install - (可选) 是否强制安装 ('y' 表示强制)，默认为 'n'
 # 返回值: 无 (通过调用外部脚本执行安装)
 # =============================================================================
+function restore_xray_install_state() {
+    local snapshot_dir="$1"
+    local binary_existed="$2"
+    local was_active="$3"
+    local was_enabled="$4"
+    local restore_status=0
+
+    if systemctl -q is-active xray; then
+        systemctl -q stop xray || return 1
+    fi
+    if [[ "${binary_existed}" -eq 1 ]]; then
+        cp -a "${snapshot_dir}/xray" "${XRAY_BIN_PATH}" || return 1
+    else
+        rm -f "${XRAY_BIN_PATH}"
+    fi
+    if [[ "${was_enabled}" -eq 1 ]]; then
+        systemctl -q enable xray >/dev/null 2>&1 || restore_status=1
+    else
+        systemctl -q disable xray >/dev/null 2>&1 || true
+    fi
+    if [[ "${was_active}" -eq 1 ]]; then
+        systemctl reset-failed xray >/dev/null 2>&1 || true
+        systemctl -q start xray || restore_status=1
+    fi
+    return "${restore_status}"
+}
+
 function handler_install() {
     local xray_version="$1"       # 获取版本参数
     local force_install="${2:-n}" # 获取强制安装参数，默认为 'n'
     local installed_version=''
     local target_version=''
     local need_install=0
+    local old_script_config="${SCRIPT_CONFIG}"
+    local binary_snapshot_dir=''
+    local binary_existed=0
+    local was_active=0
+    local was_enabled=0
     # 如果提供了版本参数，则处理版本配置
     if [[ -n "${xray_version}" ]]; then
-        handler_xray_version "${xray_version}" || return 1
+        handler_xray_version "${xray_version}" 'n' || return 1
     else
         # 否则从脚本配置中读取版本
         CONFIG_DATA['version']="$(echo "${SCRIPT_CONFIG}" | jq -r '.xray.version')"
     fi
-    target_version="${CONFIG_DATA['version']#v}"
-    if cmd_exists 'xray'; then
-        installed_version="$(xray -version 2>/dev/null | awk 'NR == 1 {print $2}')"
+    if [[ -z "${CONFIG_DATA['version']}" || "${CONFIG_DATA['version']}" == 'null' ]]; then
+        handler_xray_version 'release' 'n' || return 1
     fi
-    if ! cmd_exists 'xray' || [[ "${force_install}" != 'n' ]] ||
-        [[ -n "${target_version}" && "${installed_version#v}" != "${target_version}" ]]; then
+    CONFIG_DATA['version']="$(normalize_xray_version "${CONFIG_DATA['version']}")" || return 1
+    target_version="${CONFIG_DATA['version']}"
+    if [[ -x "${XRAY_BIN_PATH}" ]]; then
+        installed_version="$("${XRAY_BIN_PATH}" -version 2>/dev/null | awk 'NR == 1 {print $2}')"
+    fi
+    if [[ ! -x "${XRAY_BIN_PATH}" || "${force_install}" != 'n' || "${installed_version#v}" != "${target_version#v}" ]]; then
         need_install=1
     fi
     # 仅在缺失、强制或版本不一致时调用官方安装器。
     if [[ ${need_install} -eq 1 ]]; then
-        [[ -n "${target_version}" ]] || return 1
-        # 调用 Xray-install 脚本进行安装
         local installer
-        local -a install_args=(install --no-update-service --version "${CONFIG_DATA['version']}")
+        local binary_parent=''
+        local -a install_args=(install --no-update-service --version "${target_version}")
         [[ "${force_install}" != "n" ]] && install_args+=(--force)
 
-        installer="$(curl -fsSL --retry 5 --retry-delay 2 "${XRAY_INSTALL_URL}")" || return 1
-        bash -c "${installer}" @ "${install_args[@]}" || return 1
+        binary_parent="$(dirname -- "${XRAY_BIN_PATH}")"
+        mkdir -p "${binary_parent}" || return 1
+        binary_snapshot_dir="$(mktemp -d "${binary_parent}/.xray-install.XXXXXX")" || return 1
+        if [[ -e "${XRAY_BIN_PATH}" || -L "${XRAY_BIN_PATH}" ]]; then
+            if ! cp -a "${XRAY_BIN_PATH}" "${binary_snapshot_dir}/xray"; then
+                rm -rf "${binary_snapshot_dir}"
+                return 1
+            fi
+            binary_existed=1
+        fi
+        systemctl -q is-active xray && was_active=1
+        systemctl -q is-enabled xray && was_enabled=1
+
+        installer="$(fetch_xray_installer)" || {
+            rm -rf "${binary_snapshot_dir}"
+            return 1
+        }
+        if ! bash -s -- "${install_args[@]}" <<<"${installer}"; then
+            if restore_xray_install_state "${binary_snapshot_dir}" "${binary_existed}" "${was_active}" "${was_enabled}"; then
+                rm -rf "${binary_snapshot_dir}"
+            fi
+            SCRIPT_CONFIG="${old_script_config}"
+            return 1
+        fi
     fi
-    handler_xray_runtime_compat || return 1
-    systemctl -q restart xray || return 1
-    systemctl -q is-active xray || return 1
-    installed_version="$(xray -version 2>/dev/null | awk 'NR == 1 {print $2}')"
-    [[ -z "${target_version}" || "${installed_version#v}" == "${target_version}" ]]
+    if ! handler_xray_runtime_compat; then
+        if [[ -n "${binary_snapshot_dir}" ]] &&
+            restore_xray_install_state "${binary_snapshot_dir}" "${binary_existed}" "${was_active}" "${was_enabled}"; then
+            rm -rf "${binary_snapshot_dir}"
+        fi
+        return 1
+    fi
+    if ! systemctl -q restart xray || ! systemctl -q is-active xray; then
+        if [[ -n "${binary_snapshot_dir}" ]] &&
+            restore_xray_install_state "${binary_snapshot_dir}" "${binary_existed}" "${was_active}" "${was_enabled}"; then
+            rm -rf "${binary_snapshot_dir}"
+        fi
+        return 1
+    fi
+    installed_version="$("${XRAY_BIN_PATH}" -version 2>/dev/null | awk 'NR == 1 {print $2}')"
+    if [[ "${installed_version#v}" != "${target_version#v}" ]]; then
+        if [[ -n "${binary_snapshot_dir}" ]] &&
+            restore_xray_install_state "${binary_snapshot_dir}" "${binary_existed}" "${was_active}" "${was_enabled}"; then
+            rm -rf "${binary_snapshot_dir}"
+        fi
+        return 1
+    fi
+    SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --arg version "${target_version}" '.xray.version = $version')" || return 1
+    if ! persist_script_config; then
+        if [[ -n "${binary_snapshot_dir}" ]] &&
+            restore_xray_install_state "${binary_snapshot_dir}" "${binary_existed}" "${was_active}" "${was_enabled}"; then
+            rm -rf "${binary_snapshot_dir}"
+        fi
+        SCRIPT_CONFIG="${old_script_config}"
+        return 1
+    fi
+    [[ -z "${binary_snapshot_dir}" ]] || rm -rf "${binary_snapshot_dir}"
 }
 
 # =============================================================================
@@ -1826,12 +2018,12 @@ function handler_install() {
 function handler_purge() {
     # 调用 Xray-install 脚本进行卸载 (带 --purge 参数)
     local installer
-    installer="$(curl -fsSL --retry 5 --retry-delay 2 "${XRAY_INSTALL_URL}")" || return 1
-    bash -c "${installer}" @ remove --purge || return 1
+    installer="$(fetch_xray_installer)" || return 1
+    bash -s -- remove --purge <<<"${installer}" || return 1
     # 重置 xray 字段
-    SCRIPT_CONFIG=$(reset_json_fields "${SCRIPT_CONFIG}" 'xray')
+    SCRIPT_CONFIG="$(reset_json_fields "${SCRIPT_CONFIG}" 'xray')" || return 1
     # 将重置后的脚本配置写入文件
-    echo "${SCRIPT_CONFIG}" >"${SCRIPT_CONFIG_PATH}" && sleep 2
+    persist_script_config
 }
 
 # =============================================================================
@@ -2314,6 +2506,12 @@ function handler_change_domain() {
         CONFIG_DATA["${target_domain}"]="${old_domain}"
     fi
     local new_domain="${CONFIG_DATA["${target_domain}"]}"
+    if [[ -z "${new_domain}" ]]; then
+        if [[ "${stop_cert_service}" == 'y' ]]; then
+            rollback_script_config_transaction || true
+        fi
+        _error "$(echo "$I18N_DATA" | jq -r '.handler.domain.required')"
+    fi
     local cert_dir="${NGINX_CONFIG_DIR}/certs/${new_domain}"
     local cert_exists=0
     [[ -s "${cert_dir}/fullchain.pem" && -s "${cert_dir}/privkey.pem" ]] && cert_exists=1
@@ -2633,6 +2831,7 @@ function main() {
         handler_restart || exit 1          # 重启 Xray 服务
         handler_share || exit 1            # 显示分享链接
         ;;                        # 修改 Xray 端口
+    --rollback-script-config) rollback_script_config_transaction ;;
     --change-reality-domain)
         handler_change_reality_domain || exit 1
         handler_share || exit 1

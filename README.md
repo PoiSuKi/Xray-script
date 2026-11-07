@@ -41,8 +41,8 @@
   * 实现输入值为 0 到 8, 则自动生成对 0-16 长度的 shortId
   * 支持逗号分隔的多个值
 * path 默认与自填:
-  * 随机生成(格式: /8ugSUeNJ.9OEnTErb.dVZMUAFu)
-  * 自定义输入(格式: /8ugSUeNJ, 加不加 `/` 都可以)
+ * 随机生成(格式: /8ugSUeNJ.9OEnTErb.dVZMUAFu/)
+ * 自定义输入(可省略首尾 `/`，脚本会自动补全为 `/8ugSUeNJ/`)
 
 ## 问题
 
@@ -64,6 +64,7 @@
 8. v2026.11.07 版本重构 SNI 运行时 Socket 目录，使 Nginx 与 Xray 专用用户权限和启停生命周期隔离；同时增加 XHTTP/TLS `stream-one`、H2 ALPN 校验、最低 Xray 版本检查和 SNI 域名修改保护。升级后请重新应用一次 SNI 配置以迁移 Socket 路径。
 9. v2026.11.07-r1 版本将已测试系统更新为 Debian 11、12、13，并调整其他系统的兼容性说明。
 10. v2026.11.08 版本按实际版本同步官方 Xray 安装器，增加 Xray 配置事务回滚、Nginx 非 root worker 与二进制/模块原子更新、DNS 分族校验、TCP 超时和 HTTP 重定向检测；XHTTP+Cloudflare 普通 TLS 链接改用兼容性更好的 `packet-up`，上下行分离链接按官方要求使用 `stream-up`。
+11. v2026.11.08-r1 版本修复 UUID 生成与校验、上传/更新失败回滚、mKCP FinalMask、XHTTP 路径边界和 REALITY 日志权限问题；限制 Cloudreve 管理端口仅本机访问，并加强 ACME、Docker 安装脚本与 Cloudreve 更新的失败保护。
 
 ## 分享链接
 
@@ -76,7 +77,7 @@ SNI 配置中，CDN 的分享链接 Alpn 默认为 H2，如有 H3 需求，请�
 * 获取
 
   ```sh
-  wget --no-check-certificate -O ${HOME}/Xray-script.sh https://github.com/PoiSuKi/Xray-script/raw/refs/heads/main/install.sh
+  wget -O ${HOME}/Xray-script.sh https://github.com/PoiSuKi/Xray-script/raw/refs/heads/main/install.sh
   ```
 
 * 使用
@@ -107,7 +108,7 @@ SNI 配置中，CDN 的分享链接 Alpn 默认为 H2，如有 H3 需求，请�
 * 快速启动(界面)
 
   ```sh
-  wget --no-check-certificate -O ${HOME}/Xray-script.sh https://github.com/PoiSuKi/Xray-script/raw/refs/heads/main/install.sh && bash ${HOME}/Xray-script.sh
+  wget -O ${HOME}/Xray-script.sh https://github.com/PoiSuKi/Xray-script/raw/refs/heads/main/install.sh && bash ${HOME}/Xray-script.sh
   ```
 
 ## 脚本界面

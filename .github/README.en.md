@@ -42,8 +42,8 @@
   * If input is 0 to 8, shortIds with length 0-16 are auto-generated
   * Supports multiple values separated by commas
 * path defaults and custom input:
-  * Randomly generated (example: /8ugSUeNJ.9OEnTErb.dVZMUAFu)
-  * Custom input (example: /8ugSUeNJ, with or without `/`)
+  * Randomly generated (example: /8ugSUeNJ.9OEnTErb.dVZMUAFu/)
+  * Custom input (leading and trailing `/` are added automatically)
 
 ## FAQ
 
@@ -65,6 +65,7 @@
 8. v2026.11.07 separates SNI runtime socket directories for the Nginx and Xray service users, and adds XHTTP/TLS `stream-one`, H2 ALPN validation, minimum Xray version checks, and SNI domain-edit protection. Re-apply SNI configuration once after upgrading to migrate socket paths.
 9. v2026.11.07-r1 updates the tested systems to Debian 11, 12, and 13, and clarifies the compatibility note for other systems.
 10. v2026.11.08 synchronizes the official Xray installer with the installed version, adds transactional Xray config rollback, an unprivileged Nginx worker with atomic binary/module updates, DNS family checks, TCP timeouts, and HTTP redirect detection. Regular XHTTP TLS links through Cloudflare now use the more compatible `packet-up` mode, while split up/down links use `stream-up` as required by the official behavior.
+11. v2026.11.08-r1 fixes UUID generation and validation, installer/update rollback, mKCP FinalMask, XHTTP path boundaries, and REALITY log ownership; restricts the Cloudreve management port to localhost and hardens the ACME, Docker installer, and Cloudreve update failure paths.
 
 ## Share Links
 
@@ -77,7 +78,7 @@ In SNI configuration, CDN share links use H2 as default ALPN. If you need H3, mo
 * Download
 
   ```sh
-  wget --no-check-certificate -O ${HOME}/Xray-script.sh https://github.com/PoiSuKi/Xray-script/raw/refs/heads/main/install.sh
+  wget -O ${HOME}/Xray-script.sh https://github.com/PoiSuKi/Xray-script/raw/refs/heads/main/install.sh
   ```
 
 * Usage
@@ -108,7 +109,7 @@ In SNI configuration, CDN share links use H2 as default ALPN. If you need H3, mo
 * Quick start (UI)
 
   ```sh
-  wget --no-check-certificate -O ${HOME}/Xray-script.sh https://github.com/PoiSuKi/Xray-script/raw/refs/heads/main/install.sh && bash ${HOME}/Xray-script.sh
+  wget -O ${HOME}/Xray-script.sh https://github.com/PoiSuKi/Xray-script/raw/refs/heads/main/install.sh && bash ${HOME}/Xray-script.sh
   ```
 
 ## Script UI

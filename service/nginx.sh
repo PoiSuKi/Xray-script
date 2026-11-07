@@ -565,7 +565,7 @@ function source_compile() {
     local nginx_version
     nginx_version="$(get_latest_nginx_version)" || print_error "failed to fetch the latest Nginx version"
     # 获取最新的 OpenSSL 标签名 (格式为 openssl-x.y.z)
-    local openssl_version="openssl-$(wget -qO- --no-check-certificate https://api.github.com/repos/openssl/openssl/tags | grep 'name' | cut -d\" -f4 | grep -Eoi '^openssl-([0-9]\.?){3}$' | head -1)"
+    local openssl_version="openssl-$(wget -qO- https://api.github.com/repos/openssl/openssl/tags | grep 'name' | cut -d\" -f4 | grep -Eoi '^openssl-([0-9]\.?){3}$' | head -1)"
     [[ "${openssl_version}" != 'openssl-' ]] || print_error "failed to fetch the latest OpenSSL version"
 
     # 生成编译器优化标志
@@ -642,7 +642,7 @@ function source_update() {
     # 获取最新的版本号
     local latest_nginx_version
     latest_nginx_version="$(get_latest_nginx_version)" || print_error "failed to fetch the latest Nginx version"
-    local latest_openssl_version="$(wget -qO- --no-check-certificate https://api.github.com/repos/openssl/openssl/tags | grep 'name' | cut -d\" -f4 | grep -Eoi '^openssl-([0-9]\.?){3}$' | head -1)"
+    local latest_openssl_version="$(wget -qO- https://api.github.com/repos/openssl/openssl/tags | grep 'name' | cut -d\" -f4 | grep -Eoi '^openssl-([0-9]\.?){3}$' | head -1)"
     [[ "${latest_openssl_version}" != 'openssl-' ]] || print_error "failed to fetch the latest OpenSSL version"
 
     print_info "$(echo "$I18N_DATA" | jq -r '.nginx.update.read_current_versions')"

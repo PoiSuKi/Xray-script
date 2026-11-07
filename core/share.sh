@@ -176,9 +176,13 @@ function cache_json_data() {
 # =============================================================================
 function get_common_config() {
     local inbound_index=$1 # 获取 inbound 索引参数
+    local remote_host=''
 
     # 获取服务器的公网 IPv4 地址作为远程主机地址
-    CLIENT_CONFIG[remote_host]="$(curl -fsSL ipv4.icanhazip.com)"
+    remote_host="$(curl -fsSL --retry 5 --retry-delay 2 --connect-timeout 10 --max-time 20 ipv4.icanhazip.com)" ||
+        return 1
+    [[ "${remote_host}" =~ ^[0-9a-fA-F:.]+$ ]] || return 1
+    CLIENT_CONFIG[remote_host]="${remote_host}"
     # 从脚本配置中获取端口号
     CLIENT_CONFIG[port]="$(echo "${SCRIPT_CONFIG}" | jq -r ".xray.port")"
     # 从脚本配置中获取 Reality 公钥
@@ -193,7 +197,12 @@ function get_common_config() {
     # 从 Xray 配置中获取客户端密码 (Trojan)
     CLIENT_CONFIG[password]="$(echo "${XRAY_CONFIG}" | jq -r --argjson i "${inbound_index}" '.inbounds[$i].settings.clients[0].password? | if . == null then empty else . end')"
     # 从 Xray 配置中获取 mKCP 的种子 (seed)
-    CLIENT_CONFIG[seed]="$(echo "${XRAY_CONFIG}" | jq -r --argjson i "${inbound_index}" '.inbounds[$i].streamSettings.kcpSettings.seed? | if . == null then empty else . end')"
+    CLIENT_CONFIG[seed]="$(echo "${XRAY_CONFIG}" | jq -r --argjson i "${inbound_index}" '
+        .inbounds[$i].streamSettings as $stream |
+        ($stream.finalmask.udp[]? | select(.type == "mkcp-legacy") | .settings.value) //
+        $stream.kcpSettings.seed //
+        empty
+    ')"
     # 从 Xray 配置中获取网络传输类型 (如 tcp, kcp, xhttp)
     CLIENT_CONFIG[type]="$(echo "${XRAY_CONFIG}" | jq -r --argjson i "${inbound_index}" '.inbounds[$i].streamSettings.network? | if . == null then empty else . end')"
     # 客户端仍使用 tcp 名称，raw 是服务端的新命名
@@ -365,8 +374,8 @@ function get_share_link_component() {
     SHARE_LINK_COMPONENT_VLESS="${CLIENT_CONFIG[protocol]}://${CLIENT_CONFIG[uuid]}@${CLIENT_CONFIG[remote_host]}:${CLIENT_CONFIG[port]}?type=${CLIENT_CONFIG[client_type]}"
     # 生成 Trojan 协议基础链接部分 (协议://密码@地址:端口?网络类型=...)
     SHARE_LINK_COMPONENT_TROJAN="${CLIENT_CONFIG[protocol]}://${password_encoded}@${CLIENT_CONFIG[remote_host]}:${CLIENT_CONFIG[port]}?type=${CLIENT_CONFIG[client_type]}"
-    # 生成 mKCP 网络传输参数部分 (&seed=...)
-    SHARE_LINK_COMPONENT_MKCP="&seed=${seed_encoded}"
+    # 生成 mKCP 网络传输参数部分；显式声明无旧式 header，兼容旧客户端解析。
+    SHARE_LINK_COMPONENT_MKCP="&seed=${seed_encoded}&headerType=none"
     # 生成 TLS 安全传输参数部分 (&security=tls&sni=...&alpn=h2&fp=chrome)
     SHARE_LINK_COMPONENT_TLS="&security=${CLIENT_CONFIG[security]}&sni=${CLIENT_CONFIG[server_name]}&alpn=h2&fp=chrome"
     # 生成 Reality 安全传输参数部分 (&security=reality&sni=...&pbk=...&sid=...&spx=%2F&fp=chrome)
@@ -554,7 +563,7 @@ function show_fallback_config() {
     show_config
 
     # 重新获取第二个 inbound (index 2) 的通用配置
-    get_common_config 2
+    get_common_config 2 || return 1
     # 设置第二个配置的标签为 'fallbak_xhttp_reality'
     CLIENT_CONFIG[tag]='fallbak_xhttp_reality'
     # 生成 fallback 的 XHTTP 分享链接
@@ -577,7 +586,7 @@ function show_sni_config() {
     show_config
 
     # 重新获取第二个 inbound (index 2) 的通用配置
-    get_common_config 2
+    get_common_config 2 || return 1
     # 设置第二个配置的标签为 'sni_xhttp_reality'
     CLIENT_CONFIG[tag]='sni_xhttp_reality'
     # 生成 fallback 的 XHTTP 分享链接
@@ -586,7 +595,7 @@ function show_sni_config() {
     show_config
 
     # 重新获取第二个 inbound (index 2) 的通用配置
-    get_common_config 2
+    get_common_config 2 || return 1
     # 设置第三个配置的标签为 'sni_tls_down'
     CLIENT_CONFIG[tag]='sni_tls_down'
     # 生成 TLS 下行的额外配置
@@ -597,7 +606,7 @@ function show_sni_config() {
     show_config
 
     # 重新获取第二个 inbound (index 2) 的通用配置
-    get_common_config 2
+    get_common_config 2 || return 1
     # 设置第四个配置的标签为 'sni_xhttp_cdn'
     CLIENT_CONFIG[tag]='sni_xhttp_cdn'
     # 清空额外配置
@@ -608,7 +617,7 @@ function show_sni_config() {
     show_config
 
     # 重新获取第二个 inbound (index 2) 的通用配置
-    get_common_config 2
+    get_common_config 2 || return 1
     # 设置第五个配置的标签为 'sni_reality_down'
     CLIENT_CONFIG[tag]='sni_reality_down'
     # 生成 Reality 下行的额外配置
@@ -637,7 +646,7 @@ function main() {
     cache_json_data
 
     # 获取第一个 inbound (index 1) 的通用配置
-    get_common_config 1
+    get_common_config 1 || return 1
 
     # 根据脚本配置中的 tag (转换为小写) 选择不同的处理分支
     case "$(echo "${SCRIPT_CONFIG}" | jq -r '.xray.tag | ascii_downcase')" in

@@ -136,6 +136,8 @@ function exec_handler() {
     bash "${HANDLER_PATH}" "$@"
     local exit_code=$?
     if [[ ${exit_code} -ne 0 ]]; then
+        # 多阶段安装失败时撤销尚未提交的脚本配置事务。
+        bash "${HANDLER_PATH}" '--rollback-script-config' >/dev/null 2>&1 || true
         _error "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.handler_failed")"
     fi
 }

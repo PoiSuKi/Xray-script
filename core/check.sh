@@ -50,7 +50,7 @@ readonly DOMAIN_REGEX="^([a-zA-Z0-9]([-a-zA-Z0-9]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]
 readonly IPV4_REGEX='^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$' # IPv4
 readonly IPV6_REGEX='^([0-9a-fA-F]{0,4}:){1,7}[0-9a-fA-F]{0,4}$'                                            # IPv6 (简化版)
 readonly HEX_REGEX='^[0-9a-fA-F]+$'                                                                         # 十六进制字符串
-readonly UUID_REGEX='^[0-9a-fA-F]{8}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{12}$' # UUID
+readonly UUID_REGEX='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' # UUID
 readonly EMAIL_REGEX='^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'                                     # 邮箱地址
 
 # --- 全局变量声明 ---
@@ -501,7 +501,7 @@ function check_port() {
     if [[ -z "${port}" ]]; then
         _pass "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.port.empty")"
     # 检查端口号是否在 1-65535 范围内
-    elif [[ "${port}" =~ ^[0-9]+$ ]] && ((port >= 1 && port <= 65535)); then
+    elif [[ "${port}" =~ ^[0-9]{1,5}$ ]] && ((10#${port} >= 1 && 10#${port} <= 65535)); then
         _pass "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.port.valid")$port"
     else
         # 如果超出范围，则为无效
@@ -599,6 +599,12 @@ function check_path() {
         return 0
     fi
 
+    # XHTTP matches paths as prefixes, so "/api" would also capture "/api-v2".
+    if [[ "${path}" != /* || "${path}" != */ || "${path}" == '/' ]]; then
+        _fail "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.path.slash_error")$path"
+        return 1
+    fi
+
     # 检查路径中是否包含空格
     if [[ "${path}" == *[[:space:]]* ]]; then
         _fail "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.path.space_error")$path"
@@ -679,14 +685,20 @@ function check_short_id() {
 # =============================================================================
 function check_domain_security() {
     local domain="$1" # 获取域名参数
+    local required="${2:-n}"
 
     # 打印正在检查的信息
     _info "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.domain.security_check")${domain}"
 
     # 如果域名为空，则认为是有效的（可能表示不使用域名）
     if [[ -z "${domain}" ]]; then
-        _pass "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.domain.empty")"
-        return 0
+        if [[ "${required}" == 'y' ]]; then
+            _fail "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.domain.required_error")"
+            return 1
+        else
+            _pass "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.domain.empty")"
+            return 0
+        fi
     fi
 
     # 检查域名格式是否有效
@@ -1044,6 +1056,7 @@ function main() {
     --path) check_path "$@" >&2 ;;                # 检查路径
     --short) check_short_id "$@" >&2 ;;           # 检查 Short ID
     --domain) check_domain_security "$@" >&2 ;;   # 检查域名安全性
+    --required-domain) check_domain_security "${1}" 'y' >&2 ;;
     --dns) check_dns_resolution "$@" >&2 ;;       # 检查 DNS 解析
     --tag) check_xray_config_exists "$@" >&2 ;;   # 检查 Xray 配置文件
     --xray) check_xray_version_exists "$@" >&2 ;; # 检查 Xray 版本

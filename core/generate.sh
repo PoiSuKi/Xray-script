@@ -50,7 +50,10 @@ function generate_random() {
     local custom_max=${2} # 获取第二个参数作为自定义最大值
 
     # 使用 /dev/urandom 生成一个无符号32位随机整数
-    local random=$(od -An -N4 -tu4 </dev/urandom)
+    local random=''
+    random="$(od -An -N4 -tu4 </dev/urandom)" || return 1
+    random="${random//[[:space:]]/}"
+    [[ "${random}" =~ ^[0-9]+$ ]] || return 1
 
     # 检查自定义的最小值和最大值是否为有效正整数，并且最小值小于最大值
     if [[ ${custom_min} =~ ^[0-9]+$ && ${custom_max} =~ ^[0-9]+$ ]] && ((custom_min < custom_max)); then
@@ -62,6 +65,32 @@ function generate_random() {
         # 如果参数无效，则直接输出原始随机数
         echo "${random}"
     fi
+}
+
+function generate_random_string() {
+    local length="$1"
+    local alphabet="$2"
+    local result=''
+    local bytes=''
+    local byte=''
+    local alphabet_length=${#alphabet}
+    local limit=0
+
+    [[ "${length}" =~ ^[0-9]+$ ]] || return 1
+    ((alphabet_length > 0)) || return 1
+    ((length == 0)) && return 0
+    limit=$((256 - (256 % alphabet_length)))
+
+    while ((${#result} < length)); do
+        bytes="$(od -An -N64 -tu1 /dev/urandom)" || return 1
+        for byte in ${bytes}; do
+            [[ "${byte}" =~ ^[0-9]+$ ]] || return 1
+            ((byte < limit)) || continue
+            result+="${alphabet:byte % alphabet_length:1}"
+            ((${#result} == length)) && break
+        done
+    done
+    printf '%s\n' "${result}"
 }
 
 # =============================================================================
@@ -111,20 +140,22 @@ function generate_uuid() {
     local input="${1}" # 获取可选的输入参数
     local uuid         # 声明用于存储 UUID 的局部变量
 
-    if [[ "${input}" =~ ^[0-9a-fA-F]{8}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{12}$ ]]; then
+    if [[ "${input}" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
         uuid="${input}"
     elif [[ -z "${input}" ]]; then
         if command -v xray &>/dev/null; then
-            uuid=$(xray uuid)
+            uuid="$(xray uuid)" || return 1
         else
-            uuid=$(cat /proc/sys/kernel/random/uuid)
+            uuid="$(cat /proc/sys/kernel/random/uuid)" || return 1
         fi
     elif command -v xray &>/dev/null; then
-        uuid=$(xray uuid -i "${input}")
+        uuid="$(xray uuid -i "${input}")" || return 1
     else
         uuid="$(generate_uuid_from_string "${input}")" || return 1
     fi
 
+    [[ "${uuid}" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]] ||
+        return 1
     # 输出生成的 UUID
     echo "${uuid}"
 }
@@ -138,11 +169,10 @@ function generate_uuid() {
 # =============================================================================
 function generate_password() {
     # 首先生成一个 16 到 64 之间的随机数作为密码长度
-    local length=$(generate_random 16 64)
+    local length=''
+    length="$(generate_random 16 64)" || return 1
 
-    # 从 /dev/urandom 读取随机字节，通过 tr 过滤出指定字符集，
-    # 再用 fold 按指定长度换行，最后用 head 取第一行作为密码
-    cat /dev/urandom | tr -cd '0-9a-zA-Z!@$%*' | fold -w $length | head -n 1
+    generate_random_string "${length}" '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!@$%*'
 }
 
 # =============================================================================
@@ -155,11 +185,16 @@ function generate_password() {
 # =============================================================================
 function generate_target() {
     # 生成一个随机数作为索引
-    local random=$(generate_random)
+    local random=''
+    local target=''
+    random="$(generate_random)" || return 1
 
     # 使用 jq 读取配置文件，获取 .target 对象的所有键名(keys)，
     # 然后计算随机索引对键名数组长度取模，从而随机选择一个键名
-    jq -r --argjson random "${random}" '.target | keys | .[$random % length?]' "${SCRIPT_CONFIG_PATH}"
+    target="$(jq -er --argjson random "${random}" '.target | keys | if length > 0 then .[$random % length] else empty end' "${SCRIPT_CONFIG_PATH}")" ||
+        return 1
+    [[ -n "${target}" ]] || return 1
+    printf '%s\n' "${target}"
 }
 
 # =============================================================================
@@ -175,24 +210,8 @@ function generate_target() {
 # =============================================================================
 function generate_server_names() {
     local target=${1} # 获取目标名称参数
-
-    # 使用 jq 读取并可能修改配置文件内容：
-    # 如果 .target 对象中已存在 $key (即 $target)，
-    # 则返回原配置；
-    # 否则，将新的键值对 ($target: [$target]) 添加到 .target 对象中
-    local SCRIPT_CONFIG=$(jq --arg key "${target}" '
-    if .target | has($key) then
-        .
-    else
-        .target += { ($key): [$key] }
-    end
-    ' "${SCRIPT_CONFIG_PATH}")
-
-    # 将修改后的配置内容写回配置文件
-    echo "${SCRIPT_CONFIG}" >"${SCRIPT_CONFIG_PATH}" && sleep 2
-
-    # 从修改后的配置中提取并输出指定 target 的服务器名称列表
-    echo "${SCRIPT_CONFIG}" | jq --arg key "${target}" '.target[$key]'
+    [[ -n "${target}" ]] || return 1
+    jq -er --arg key "${target}" '.target[$key] // [$key]' "${SCRIPT_CONFIG_PATH}"
 }
 
 # =============================================================================
@@ -206,14 +225,19 @@ function generate_x25519() {
     # 调用 xray x25519 命令生成密钥对，输出通常为两行：
     # Private key: <private_key>
     # Public key: <public_key>
-    local X25519_KEY=$(xray x25519)
+    local X25519_KEY=''
+    local PRIVATE_KEY=''
+    local PUBLIC_KEY=''
+    local HASH32=''
+    X25519_KEY="$(xray x25519)" || return 1
 
     # 使用 sed 提取第一行中的私钥部分
-    local PRIVATE_KEY=$(echo "${X25519_KEY}" | sed -ne '1s/.*:\s*//p')
+    PRIVATE_KEY="$(echo "${X25519_KEY}" | sed -ne '1s/.*:\s*//p')" || return 1
     # 使用 sed 提取第二行中的公钥部分
-    local PUBLIC_KEY=$(echo "${X25519_KEY}" | sed -ne '2s/.*:\s*//p')
+    PUBLIC_KEY="$(echo "${X25519_KEY}" | sed -ne '2s/.*:\s*//p')" || return 1
     # 使用 sed 提取第三行中的哈希部分
-    local HASH32=$(echo "${X25519_KEY}" | sed -ne '3s/.*:\s*//p')
+    HASH32="$(echo "${X25519_KEY}" | sed -ne '3s/.*:\s*//p')" || return 1
+    [[ -n "${PRIVATE_KEY}" && -n "${PUBLIC_KEY}" && -n "${HASH32}" ]] || return 1
 
     # 将私钥和公钥，以及哈希用逗号连接后输出
     echo "${PRIVATE_KEY},${PUBLIC_KEY},${HASH32}"
@@ -234,7 +258,8 @@ function generate_short_id() {
     local input=$1 # 获取输入参数
 
     # 使用 sed 去除输入参数首尾的空白字符
-    local trimmed_input=$(echo "$input" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    local trimmed_input=''
+    trimmed_input="$(echo "$input" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')" || return 1
     local length # 声明存储最终长度的变量
 
     # 检查处理后的输入是否为 0-8 的数字
@@ -243,12 +268,16 @@ function generate_short_id() {
         length=$trimmed_input
     else
         # 如果不是，则生成一个 0-8 之间的随机长度
-        length=$(generate_random 0 8)
+        length="$(generate_random 0 8)" || return 1
     fi
 
     # 如果长度为 0，则输出空字符串
     # 否则，使用 openssl 生成指定长度的十六进制随机字符串
-    [[ ${length} -eq 0 ]] && echo "" || echo "$(openssl rand -hex ${length})"
+    if [[ ${length} -eq 0 ]]; then
+        printf '\n'
+        return 0
+    fi
+    generate_random_string "$((length * 2))" '0123456789abcdef'
 }
 
 # =============================================================================
@@ -267,7 +296,7 @@ function generate_short_ids() {
     local -a args=() # 声明一个数组用于存储输入参数
 
     # 将所有输入参数按空格分割并存入 args 数组
-    IFS=' ' read -r -a args <<<"$@"
+    IFS=' ' read -r -a args <<<"$@" || return 1
 
     # 遍历每个输入参数
     for arg in "${args[@]}"; do
@@ -275,11 +304,13 @@ function generate_short_ids() {
         if [[ $arg =~ ^[0-8]$ ]]; then
             # 调用 generate_short_id 生成对应长度的 ID，
             # 并使用 jq -R 将其转换为 JSON 字符串格式后添加到 ids 数组
-            ids+=("$(generate_short_id "${arg}" | jq -R)")
+            local generated=''
+            generated="$(generate_short_id "${arg}")" || return 1
+            ids+=("$(printf '%s\n' "${generated}" | jq -R)") || return 1
         else
             # 如果不是数字，则直接将参数作为 ID 值，
             # 同样使用 jq -R 转换为 JSON 字符串格式后添加到 ids 数组
-            ids+=("$(printf '%s\n' "${arg}" | jq -R)")
+            ids+=("$(printf '%s\n' "${arg}" | jq -R)") || return 1
         fi
     done
 
@@ -293,21 +324,21 @@ function generate_short_ids() {
 
 # =============================================================================
 # 函数名称: generate_path
-# 功能描述: 生成一个随机的 URL 路径，以 '/' 开头。
+# 功能描述: 生成一个随机的 URL 路径，以 '/' 开头和结尾。
 #           路径由 16 到 64 个随机字母和数字组成。
 # 参数: 无
 # 返回值: 生成的随机路径字符串 (echo 输出)
 # =============================================================================
 function generate_path() {
     # 生成一个 16 到 64 之间的随机数作为路径长度
-    local length=$(generate_random 16 64)
+    local length=''
+    local domain_path=''
+    length="$(generate_random 16 64)" || return 1
+    domain_path="$(generate_random_string "${length}" '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ')" ||
+        return 1
 
-    # 从 /dev/urandom 读取随机字节，通过 tr 过滤出字母和数字，
-    # 再用 fold 按指定长度换行，最后用 head 取第一行作为路径主体
-    local domain_path=$(cat /dev/urandom | tr -cd 'a-zA-Z0-9' | fold -w $length | head -n 1)
-
-    # 在路径主体前加上 '/' 并输出
-    echo "/${domain_path}"
+    # 在路径主体前后加上 '/'，确保 XHTTP 前缀匹配落在完整路径边界。
+    echo "/${domain_path}/"
 }
 
 # =============================================================================

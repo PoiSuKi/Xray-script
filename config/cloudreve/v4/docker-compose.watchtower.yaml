@@ -9,7 +9,7 @@ services:
     networks:
       - share_net
     ports:
-      - 5212:5212
+      - "127.0.0.1:5212:5212"
     environment:
       - CR_CONF_Database.Type=postgres
       - CR_CONF_Database.Host=postgresql
@@ -21,8 +21,9 @@ services:
       - backend_data:/cloudreve/data
 
   postgresql:
-    image: postgres:latest
+    image: postgres:17
     container_name: postgresql
+    restart: unless-stopped
     environment:
       - POSTGRES_USER=cloudreve
       - POSTGRES_DB=cloudreve
@@ -35,6 +36,7 @@ services:
   redis:
     image: redis:latest
     container_name: redis
+    restart: unless-stopped
     volumes:
       - redis_data:/data
     networks:

@@ -218,29 +218,51 @@ function _os_ver() {
 # 返回值: 无 (执行安装过程，失败时会调用 print_error 退出)
 # =============================================================================
 function install_docker() {
+    local installer_file=''
+
     # 打印开始安装的信息
     print_info "$(echo "$I18N_DATA" | jq -r '.docker.install.start')"
 
-    # 下载 Docker 官方安装脚本到工具目录
-    wget -O "${TOOL_DIR}/install-docker.sh" https://get.docker.com
+    installer_file="$(mktemp)" || print_error "$(echo "$I18N_DATA" | jq -r '.docker.install.download_fail')"
+    trap 'rm -f -- "${installer_file:-}"' EXIT
+
+    # 完整下载并通过语法检查后才执行，避免网络失败后运行陈旧或截断的脚本。
+    if ! wget -q -O "${installer_file}" --timeout=30 --tries=5 https://get.docker.com ||
+        [[ ! -s "${installer_file}" ]] ||
+        ! sh -n "${installer_file}"; then
+        rm -f -- "${installer_file}"
+        trap - EXIT
+        print_error "$(echo "$I18N_DATA" | jq -r '.docker.install.download_fail')"
+    fi
 
     # 检查是否为 CentOS 8 系统
     if [[ "$(_os)" == "centos" && "$(_os_ver)" -eq 8 ]]; then
         # 打印针对 CentOS 8 的修复信息
         print_info "$(echo "$I18N_DATA" | jq -r '.docker.install.centos8_fix')"
         # 修改安装脚本，在安装命令中添加 --allowerasing 选项以解决依赖冲突
-        sed -i 's|$sh_c "$pkg_manager install -y -q $pkgs"| $sh_c "$pkg_manager install -y -q $pkgs --allowerasing"|' "${TOOL_DIR}/install-docker.sh"
+        sed -i 's|$sh_c "$pkg_manager install -y -q $pkgs"| $sh_c "$pkg_manager install -y -q $pkgs --allowerasing"|' "${installer_file}"
     fi
 
     # 打印运行前检查的信息
     print_info "$(echo "$I18N_DATA" | jq -r '.docker.install.dry_run')"
     # 执行安装脚本的 --dry-run 模式进行检查
-    sh "${TOOL_DIR}/install-docker.sh" --dry-run
+    sh "${installer_file}" --dry-run || {
+        rm -f -- "${installer_file}"
+        trap - EXIT
+        print_error "$(echo "$I18N_DATA" | jq -r '.docker.install.dry_run_fail')"
+    }
 
     # 打印正式运行安装的信息
     print_info "$(echo "$I18N_DATA" | jq -r '.docker.install.running')"
     # 执行安装脚本进行实际安装
-    sh "${TOOL_DIR}/install-docker.sh"
+    sh "${installer_file}" || {
+        rm -f -- "${installer_file}"
+        trap - EXIT
+        print_error "$(echo "$I18N_DATA" | jq -r '.docker.install.run_fail')"
+    }
+    rm -f -- "${installer_file}"
+    trap - EXIT
+    cmd_exists docker || print_error "$(echo "$I18N_DATA" | jq -r '.docker.install.verify_fail')"
 }
 
 # =============================================================================
@@ -546,12 +568,9 @@ function update_cloudreve_v4() {
         print_info "$(echo "$I18N_DATA" | jq -r '.docker.cloudreve_v4.update')"
         # 切换到 Cloudreve v4 目录
         cd "${CLOUDREVE_V4_DIR}" || print_error "failed to enter Cloudreve v4 directory"
-        # 停止服务
-        docker compose down || print_error "failed to stop Cloudreve v4"
-        # 拉取最新的镜像
+        # 先拉取成功后重建，拉取失败时保留现有服务继续运行。
         docker compose pull || print_error "failed to pull Cloudreve v4 image"
-        # 重启服务
-        docker compose up -d || print_error "failed to start Cloudreve v4"
+        docker compose up -d --remove-orphans || print_error "failed to update Cloudreve v4"
     fi
 }
 
