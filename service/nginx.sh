@@ -535,7 +535,7 @@ function compile_dependencies() {
         ;;
     debian | ubuntu)
         # 安装 Debian/Ubuntu 特定的工具和开发库
-        _install dnsutils g++ perl-base perl
+        _install bind9-dnsutils g++ perl-base perl
         _install libpcre2-dev zlib1g-dev libxml2-dev libxslt1-dev libgd-dev libgeoip-dev libgoogle-perftools-dev libperl-dev libbrotli-dev
         ;;
     esac

@@ -319,7 +319,7 @@ function check_dependencies() {
         ;;
     debian | ubuntu)
         # 为 Debian/Ubuntu 添加系统管理工具
-        packages+=("cron" "bsdmainutils" "iproute2" "procps" "dnsutils")
+        packages+=("cron" "bsdmainutils" "iproute2" "procps" "bind9-dnsutils")
         # 遍历包列表，检查是否安装
         for pkg in "${packages[@]}"; do
             if ! dpkg -s "$pkg" &>/dev/null; then
@@ -369,7 +369,7 @@ function install_dependencies() {
         ;;
     ubuntu | debian)
         # 为 Debian/Ubuntu 添加系统管理工具
-        packages+=("cron" "bsdmainutils" "iproute2" "procps" "dnsutils")
+        packages+=("cron" "bsdmainutils" "iproute2" "procps" "bind9-dnsutils")
         # 更新包列表并安装软件包
         apt update -y
         for pkg in "${packages[@]}"; do

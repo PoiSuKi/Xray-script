@@ -187,7 +187,7 @@ The script checks and installs the following Debian dependencies as needed. Xray
 | Purpose | Dependencies |
 | --- | --- |
 | Base runtime and downloads | `ca-certificates`, `curl`, `wget`, `git`, `jq`, `tzdata`, `qrencode`, `socat` |
-| System management | `cron`, `bsdmainutils`, `iproute2`, `procps`, `dnsutils` |
+| System management | `cron`, `bsdmainutils`, `iproute2`, `procps`, `bind9-dnsutils` |
 | Nginx build basics | `gcc`, `g++`, `make`, `tar`, `gzip`, `perl-base`, `perl` |
 | Nginx build libraries | `libpcre2-dev`, `zlib1g-dev`, `libxml2-dev`, `libxslt1-dev`, `libgd-dev`, `libgeoip-dev`, `libgoogle-perftools-dev`, `libperl-dev`, `libbrotli-dev` |
 | SSL and certificates | `openssl`, `curl`, `cron` |

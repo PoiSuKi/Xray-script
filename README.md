@@ -186,7 +186,7 @@ WARP Proxy : 已启动
 | 用途 | 依赖 |
 | --- | --- |
 | 基础运行与下载 | `ca-certificates`、`curl`、`wget`、`git`、`jq`、`tzdata`、`qrencode`、`socat` |
-| 系统管理 | `cron`、`bsdmainutils`、`iproute2`、`procps`、`dnsutils` |
+| 系统管理 | `cron`、`bsdmainutils`、`iproute2`、`procps`、`bind9-dnsutils` |
 | Nginx 编译基础 | `gcc`、`g++`、`make`、`tar`、`gzip`、`perl-base`、`perl` |
 | Nginx 编译库 | `libpcre2-dev`、`zlib1g-dev`、`libxml2-dev`、`libxslt1-dev`、`libgd-dev`、`libgeoip-dev`、`libgoogle-perftools-dev`、`libperl-dev`、`libbrotli-dev` |
 | SSL 与证书 | `openssl`、`curl`、`cron` |

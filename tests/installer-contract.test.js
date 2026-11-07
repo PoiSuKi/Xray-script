@@ -52,6 +52,8 @@ test("protocol setup prepares the matching Xray version before persisting config
 test("bootstrap fails clearly when dependencies remain missing", () => {
   const install = read("install.sh");
 
+  assert.match(install, /bind9-dnsutils/);
+  assert.doesNotMatch(install, /"dnsutils"/);
   assert.match(
     install,
     /if ! check_dependencies; then\s+_error "\$\{I18N_DATA\['failed'\]\}: dependencies"/,
