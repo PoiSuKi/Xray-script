@@ -54,29 +54,15 @@
 
 ## 更新日志
 
-1. v2025.11.19 版本解决【开启 WARP 时没有设置日志限制，导致容器日志会一直叠加，最终占满硬盘空间】问题。
-   1. 已启动 WARP 分流的用户可以在【管理配置】->【分流管理】中选择【重置 WARP Proxy】选项，该选项实现清空容器日志与重置 WARP Proxy。
-   2. 已添加日志限制，如需使用 WARP 功能直接启用即可。
-2. v2026.03.01 版本添加切换 CA 厂商功能，切换 CA 厂商时，脚本会对现有域名证书执行强制重签（`domain`、`cdn` 与 `custom_sites[].domain`），全部成功后才写入新 CA；若中途失败会自动回滚到原 CA，并恢复对应配置，避免影响后续 acme 自动续期任务。
-   1. 强制重签会绕过「域名未变化」检查（acme.sh 的 `Domains not changed` 提示场景）。
-   2. 请留意 CA 侧签发频率限制（例如 Let's Encrypt 的速率限制）。
-3. v2026.03.17 版本添加 SNI 自定义域名与反代应用管理功能，用于在不影响现有 `Reality(domain)` 与 `CDN(cdn)` 站点的前提下，额外挂载多个 HTTPS 反代站点。
-   1. 菜单路径：`管理配置 -> SNI 配置管理 -> 管理自定义域名与反代应用`
-   2. 支持列表 / 新增 / 编辑 / 删除，自定义站点拥有独立证书、独立 `sites-available/<domain>.conf`、独立 stream 映射与 UDS。
-   3. `stream.conf` 会按 `domain`、`cdn`、`custom_sites` 全量重建；UDS 名称规则为 `SHA-256(域名)` 前 `12` 位 + 端口号。
-   4. 反代目标支持仅输入端口或完整 `http(s)://host:port` 地址；仅输入端口时自动规范化为 `http://127.0.0.1:<port>`；不接受带 `path`、`query`、`fragment` 的地址。
-   5. 编辑时仅修改上游地址不会重复签发证书；修改域名时会先申请新证书，再切换配置，失败自动回滚；删除时会同时清理站点配置、软链、续签记录与证书目录。
-   6. 自定义域名不能与 `domain`、`cdn` 或其他自定义站点域名重复；切换 CA 厂商与“强制续签所有证书”都会覆盖自定义站点域名。
-   7. 自定义站点为“纯反代站点”，不包含 Xray 的 `xhttp/grpc` 路径，也不接入 Cloudreve 管理逻辑；代理层不会额外注入 `Content-Security-Policy`，由上游应用自行控制 CSP。
-4. v2026.11.05 版本适配新版 Xray 官方安装器：移除已废弃的 `-u root` 参数，兼容专用 `xray` 运行用户与配置权限，GeoData 更新改用官方 `update-geodata`，并将脚本自更新地址切换至 PoiSuKi fork。
-5. v2026.11.05-r2 版本将 Nginx 主线版本来源切换为 Nginx 官方下载页，修复版本相同时重复编译，并确保 SNI 模式始终使用脚本管理的 `/usr/local/nginx`；同时默认关闭所有 Xray 入站流量探测。
-6. v2026.11.05-r3 版本将客户端传输名称统一为 Mihomo/Clash 使用的 `tcp`，并为 Reality 分享链接添加 `support-x25519mlkem768=true`，以兼容 Xray v26.9.8+ 的 REALITY 握手要求。
-7. v2026.11.05-r4 版本在主菜单新增 `99. 更新脚本`，并新增仅修改 REALITY 域名、保留其余设置的管理功能。
-8. v2026.11.05-r5 版本新增 `88. 一键安装 BBR`，通过内核 `tcp_bbr` 模块、`fq` 队列和 `sysctl.d`/`modules-load.d` 实现即时启用与开机持久化。
-9. v2026.11.05-r6 版本修复纯 Xray 配置在未安装 Nginx 时仍检查 `nginx.service`，导致 systemd 输出 `Failed to get unit file state for nginx.service` 的问题。
-10. v2026.11.05-r7 版本修复自定义 UUID 输入被 shell 拆分的问题，并在终端客户端配置中显示 `SupportX25519MLKEM768`。
-11. v2026.11.07 版本重构 SNI 运行时 Socket 目录，使 Nginx 与 Xray 专用用户权限和启停生命周期隔离；同时增加 XHTTP/TLS `stream-one`、H2 ALPN 校验、最低 Xray 版本检查和 SNI 域名修改保护。升级后请重新应用一次 SNI 配置以迁移 Socket 路径。
-12. v2026.11.07-r1 版本将已测试系统更新为 Debian 11、12、13，并调整其他系统的兼容性说明。
+1. v2026.11.05 版本适配新版 Xray 官方安装器：移除已废弃的 `-u root` 参数，兼容专用 `xray` 运行用户与配置权限，GeoData 更新改用官方 `update-geodata`，并将脚本自更新地址切换至 PoiSuKi fork。
+2. v2026.11.05-r2 版本将 Nginx 主线版本来源切换为 Nginx 官方下载页，修复版本相同时重复编译，并确保 SNI 模式始终使用脚本管理的 `/usr/local/nginx`；同时默认关闭所有 Xray 入站流量探测。
+3. v2026.11.05-r3 版本将客户端传输名称统一为 Mihomo/Clash 使用的 `tcp`，并为 Reality 分享链接添加 `support-x25519mlkem768=true`，以兼容 Xray v26.9.8+ 的 REALITY 握手要求。
+4. v2026.11.05-r4 版本在主菜单新增 `99. 更新脚本`，并新增仅修改 REALITY 域名、保留其余设置的管理功能。
+5. v2026.11.05-r5 版本新增 `88. 一键安装 BBR`，通过内核 `tcp_bbr` 模块、`fq` 队列和 `sysctl.d`/`modules-load.d` 实现即时启用与开机持久化。
+6. v2026.11.05-r6 版本修复纯 Xray 配置在未安装 Nginx 时仍检查 `nginx.service`，导致 systemd 输出 `Failed to get unit file state for nginx.service` 的问题。
+7. v2026.11.05-r7 版本修复自定义 UUID 输入被 shell 拆分的问题，并在终端客户端配置中显示 `SupportX25519MLKEM768`。
+8. v2026.11.07 版本重构 SNI 运行时 Socket 目录，使 Nginx 与 Xray 专用用户权限和启停生命周期隔离；同时增加 XHTTP/TLS `stream-one`、H2 ALPN 校验、最低 Xray 版本检查和 SNI 域名修改保护。升级后请重新应用一次 SNI 配置以迁移 Socket 路径。
+9. v2026.11.07-r1 版本将已测试系统更新为 Debian 11、12、13，并调整其他系统的兼容性说明。
 
 ## 分享链接
 
@@ -172,101 +158,40 @@ WARP Proxy : 已启动
 
 其他系统可能能用，但未测试过，可能存在问题。
 
-## 安装时长说明
-
-SNI 配置适合安装一次后长期使用，不适合反复重置系统安装，这会消耗您的大量时间。如果需要更换配置和域名等，在管理界面都有相应的选项。
-
-更换为非 SNI 配置后，Nginx 将停止服务，但会继续保留在本机，再启用 SNI 配置时不会进行重新安装。
-
-### 安装时长参考
-
-安装流程：
-
-更新系统管理包->安装依赖->[安装Docker]->[安装Cloudreve]->[安装Cloudflare-warp]->安装Xray->安装Nginx->申请证书->配置文件
-
-**这是一台单核1G的服务器的平均安装时长，仅供参考：**
-
-| 项目                | 时长      |
-| ------------------- | --------- |
-| 更新系统管理包      | 0-10分钟  |
-| 安装依赖            | 0-5分钟   |
-| 安装Docker          | 1-2分钟   |
-| 安装Cloudreve       | 3-5分钟   |
-| 安装Cloudflare-warp | 3-5分钟   |
-| 安装Xray            | <半分钟   |
-| 安装Nginx           | 13-15分钟 |
-| 申请证书            | 1-2分钟   |
-| 配置文件            | <半分钟  |
-
-### 为什么 SNI 配置安装时间那么长？
-
-脚本的 Nginx 是采用源码编译的形式进行管理安装。
-
-编译相比直接安装二进制文件的优点有：
-
-1. 运行效率高 (编译时采用了-O3优化)
-2. 软件版本新
-
-缺点就是编译耗时长。
-
 ## 安装位置
 
-**Xray-script:** `/usr/local/xray-script`
-
-**Nginx:** `/usr/local/nginx`
-
-**Cloudreve:** `$HOME/.xray-script/docker/cloudreve`
-
-**Cloudflare-warp:** `$HOME/.xray-script/docker/warp`
-
-**Xray:** 见 **[Xray-install](https://github.com/XTLS/Xray-install)**
+| 项目 | 路径 |
+| --- | --- |
+| Xray-script | `/usr/local/xray-script` |
+| 脚本配置 | `$HOME/.xray-script` |
+| Xray 二进制 | `/usr/local/bin/xray` |
+| Xray 配置 | `/usr/local/etc/xray` |
+| Xray GeoData | `/usr/local/share/xray` |
+| Xray 日志 | `/var/log/xray` |
+| Xray 运行时 Socket | `/run/xray-script/xray` |
+| Nginx | `/usr/local/nginx` |
+| Nginx 日志 | `/var/log/nginx` |
+| Nginx 运行时 Socket | `/run/xray-script/nginx` |
+| systemd 服务 | `/etc/systemd/system/xray.service`、`/etc/systemd/system/nginx.service` |
+| Cloudreve v3 | `$HOME/.xray-script/docker/cloudreve/v3` |
+| Cloudreve v4 | `$HOME/.xray-script/docker/cloudreve/v4` |
+| Cloudflare WARP | `$HOME/.xray-script/docker/cloudflare-warp` |
+| acme.sh | `$HOME/.acme.sh` |
 
 ## 依赖列表
 
-使用 SNI 配置时，脚本可能自动安装以下依赖：
-| 用途                            | Debian基系统                         | Red Hat基系统       |
-| ------------------------------- | ------------------------------------ | ------------------- |
-| yumdb set(标记包手动安装)       |                                      | yum-utils           |
-| dnf config-manager              |                                      | dnf-plugins-core    |
-| IP 获取                         | iproute2                             | iproute             |
-| DNS 解析                        | dnsutils                             | bind-utils          |
-| wget                            | wget                                 | wget                |
-| curl                            | curl                                 | curl                |
-| wget/curl https                 | ca-certificates                      | ca-certificates     |
-| kill/pkill/ps/sysctl/free       | procps                               | procps-ng           |
-| epel源                          |                                      | epel-release        |
-| epel源                          |                                      | epel-next-release   |
-| remi源                          |                                      | remi-release        |
-| 防火墙                          | ufw                                  | firewalld           |
-| **编译基础：**                  |                                      |                     |
-| 下载源码文件                    | wget                                 | wget                |
-| 解压tar源码文件                 | tar                                  | tar                 |
-| 解压tar.gz源码文件              | gzip                                 | gzip                |
-| gcc                             | gcc                                  | gcc                 |
-| g++                             | g++                                  | gcc-c++             |
-| make                            | make                                 | make                |
-| **acme.sh依赖：**               |                                      |                     |
-|                                 | curl                                 | curl                |
-|                                 | openssl                              | openssl             |
-|                                 | cron                                 | crontabs            |
-| **编译openssl：**               |                                      |                     |
-|                                 | perl-base(包含于libperl-dev)         | perl-IPC-Cmd        |
-|                                 | perl-modules-5.32(包含于libperl-dev) | perl-Getopt-Long    |
-|                                 | libperl5.32(包含于libperl-dev)       | perl-Data-Dumper    |
-|                                 |                                      | perl-FindBin        |
-| **编译Brotli：**                |                                      |                     |
-|                                 | git                                  | git                 |
-|                                 | libbrotli-dev                        | brotli-devel        |
-| **编译Nginx：**                 |                                      |                     |
-|                                 | libpcre2-dev                         | pcre2-devel         |
-|                                 | zlib1g-dev                           | zlib-devel          |
-| --with-http_xslt_module         | libxml2-dev                          | libxml2-devel       |
-| --with-http_xslt_module         | libxslt1-dev                         | libxslt-devel       |
-| --with-http_image_filter_module | libgd-dev                            | gd-devel            |
-| --with-google_perftools_module  | libgoogle-perftools-dev              | gperftools-devel    |
-| --with-http_geoip_module        | libgeoip-dev                         | geoip-devel         |
-| --with-http_perl_module         |                                      | perl-ExtUtils-Embed |
-|                                 | libperl-dev                          | perl-devel          |
+脚本会按需检查并安装以下 Debian 依赖。Xray、Docker 和 Nginx 的软件源组件由各自官方安装流程处理。
+
+| 用途 | 依赖 |
+| --- | --- |
+| 基础运行与下载 | `ca-certificates`、`curl`、`wget`、`git`、`jq`、`tzdata`、`qrencode`、`socat` |
+| 系统管理 | `cron`、`bsdmainutils`、`iproute2`、`procps`、`dnsutils` |
+| Nginx 编译基础 | `gcc`、`g++`、`make`、`tar`、`gzip`、`perl-base`、`perl` |
+| Nginx 编译库 | `libpcre2-dev`、`zlib1g-dev`、`libxml2-dev`、`libxslt1-dev`、`libgd-dev`、`libgeoip-dev`、`libgoogle-perftools-dev`、`libperl-dev`、`libbrotli-dev` |
+| SSL 与证书 | `openssl`、`curl`、`cron` |
+| Xray | 由 [Xray-install](https://github.com/XTLS/Xray-install) 安装并提供所需运行环境 |
+| SNI Web 组件 | 按需安装 Docker Engine、Docker Compose，并构建 Cloudreve、Cloudflare WARP 容器 |
+| BBR | Linux 内核需提供 `tcp_bbr` 模块，推荐提供 `sch_fq` 队列模块 |
 
 ## 致谢
 

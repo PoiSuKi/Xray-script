@@ -55,29 +55,15 @@
 
 ## Changelog
 
-1. v2025.11.19 resolves the issue where WARP was enabled without log limits, causing container logs to keep growing and eventually fill up disk space.
-   1. Users who already enabled WARP routing can select 【Reset WARP Proxy】 in 【Manage Configuration】 -> 【Routing Management】 to clear container logs and reset WARP Proxy.
-   2. Log limits have been added; just enable WARP directly when needed.
-2. v2026.03.01 adds CA vendor switching. When switching CA vendor, the script force re-issues certificates for existing domains (`domain`, `cdn`, and `custom_sites[].domain`). It writes the new CA only after all re-issues succeed; if any step fails, it automatically rolls back to the original CA and restores related settings, preventing acme auto-renew from breaking.
-   1. Force re-issue bypasses the "Domains not changed" check (acme.sh skip scenario).
-   2. Watch out for CA issuance rate limits (for example, Let's Encrypt limits).
-3. v2026.03.17 adds SNI custom domain and reverse proxy app management, allowing multiple extra HTTPS reverse proxy sites without affecting the existing `Reality(domain)` and `CDN(cdn)` sites.
-   1. Menu path: `Manage Configuration -> SNI Configuration -> Manage custom domains and reverse proxy apps`
-   2. Supports list / add / edit / delete, with an independent certificate, `sites-available/<domain>.conf`, stream mapping, and UDS for each custom site.
-   3. `stream.conf` is rebuilt from `domain`, `cdn`, and `custom_sites`; UDS names use the first `12` hex chars of `SHA-256(domain)` plus the port.
-   4. Proxy targets support port-only input or full `http(s)://host:port` URLs; port-only input is normalized to `http://127.0.0.1:<port>`; URLs containing `path`, `query`, or `fragment` are rejected.
-   5. Editing only the upstream target skips certificate re-issuance; changing the domain issues the new certificate first and then switches over with rollback on failure; deleting a site also removes the site config, symlink, renew record, and certificate directory.
-   6. A custom site domain must not duplicate `domain`, `cdn`, or another custom site domain; CA switching and "force renew all certificates" also cover custom site domains.
-   7. Custom sites are "pure reverse proxy sites". They do not include Xray `xhttp/grpc` paths and are not managed by the Cloudreve integration; the proxy layer does not inject an extra `Content-Security-Policy`, so CSP should be controlled by the upstream application.
-4. v2026.11.05 adapts to the current Xray installer by removing the obsolete `-u root` option, supporting the dedicated `xray` runtime user and configuration permissions, delegating GeoData updates to the official `update-geodata` action, and moving script self-updates to the PoiSuKi fork.
-5. v2026.11.05-r2 resolves the Nginx mainline version from the official Nginx download page, avoids recompiling when versions are unchanged, ensures SNI mode uses the script-managed `/usr/local/nginx`, and disables inbound traffic sniffing for every Xray template by default.
-6. v2026.11.05-r3 uses the Mihomo/Clash transport name `tcp` in client output and adds `support-x25519mlkem768=true` to Reality share links for Xray v26.9.8+ REALITY handshakes.
-7. v2026.11.05-r4 adds menu option `99. Update Script` and a management action that changes only the REALITY domain while preserving all other settings.
-8. v2026.11.05-r5 adds `88. One-click BBR Install`, using the kernel `tcp_bbr` module, `fq` qdisc, and persistent `sysctl.d`/`modules-load.d` configuration.
-9. v2026.11.05-r6 skips `nginx.service` state checks when the script-managed Nginx is not installed, removing the systemd `Failed to get unit file state for nginx.service` message from Xray-only configurations.
-10. v2026.11.05-r7 preserves custom UUID input as a single argument and displays `SupportX25519MLKEM768` in the terminal client configuration.
-11. v2026.11.07 separates SNI runtime socket directories for the Nginx and Xray service users, and adds XHTTP/TLS `stream-one`, H2 ALPN validation, minimum Xray version checks, and SNI domain-edit protection. Re-apply SNI configuration once after upgrading to migrate socket paths.
-12. v2026.11.07-r1 updates the tested systems to Debian 11, 12, and 13, and clarifies the compatibility note for other systems.
+1. v2026.11.05 adapts to the current Xray installer by removing the obsolete `-u root` option, supporting the dedicated `xray` runtime user and configuration permissions, delegating GeoData updates to the official `update-geodata` action, and moving script self-updates to the PoiSuKi fork.
+2. v2026.11.05-r2 resolves the Nginx mainline version from the official Nginx download page, avoids recompiling when versions are unchanged, ensures SNI mode uses the script-managed `/usr/local/nginx`, and disables inbound traffic sniffing for every Xray template by default.
+3. v2026.11.05-r3 uses the Mihomo/Clash transport name `tcp` in client output and adds `support-x25519mlkem768=true` to Reality share links for Xray v26.9.8+ REALITY handshakes.
+4. v2026.11.05-r4 adds menu option `99. Update Script` and a management action that changes only the REALITY domain while preserving all other settings.
+5. v2026.11.05-r5 adds `88. One-click BBR Install`, using the kernel `tcp_bbr` module, `fq` qdisc, and persistent `sysctl.d`/`modules-load.d` configuration.
+6. v2026.11.05-r6 skips `nginx.service` state checks when the script-managed Nginx is not installed, removing the systemd `Failed to get unit file state for nginx.service` message from Xray-only configurations.
+7. v2026.11.05-r7 preserves custom UUID input as a single argument and displays `SupportX25519MLKEM768` in the terminal client configuration.
+8. v2026.11.07 separates SNI runtime socket directories for the Nginx and Xray service users, and adds XHTTP/TLS `stream-one`, H2 ALPN validation, minimum Xray version checks, and SNI domain-edit protection. Re-apply SNI configuration once after upgrading to migrate socket paths.
+9. v2026.11.07-r1 updates the tested systems to Debian 11, 12, and 13, and clarifies the compatibility note for other systems.
 
 ## Share Links
 
@@ -173,102 +159,40 @@ The distributions above have been tested successfully.
 
 Other systems may work, but are untested and may have issues.
 
-## Installation Time Notes
-
-SNI configuration is intended for long-term use after one setup, and is not suitable for repeated reinstall/reset, which consumes significant time. If you need to change configuration or domain, use the options in the management UI.
-
-After switching to a non-SNI config, Nginx will be stopped but kept on the machine. Re-enabling SNI will not reinstall Nginx.
-
-### Installation Time Reference
-
-Installation flow:
-
-Update package index -> install dependencies -> [install Docker] -> [install Cloudreve] -> [install Cloudflare-warp] -> install Xray -> install Nginx -> issue certificate -> apply configuration
-
-**Average install time on a 1-core 1GB server (for reference only):**
-
-| Item                | Duration  |
-| ------------------- | --------- |
-| Update package index| 0-10 min  |
-| Install dependencies| 0-5 min   |
-| Install Docker      | 1-2 min   |
-| Install Cloudreve   | 3-5 min   |
-| Install Cloudflare-warp | 3-5 min |
-| Install Xray        | < 0.5 min |
-| Install Nginx       | 13-15 min |
-| Issue certificate   | 1-2 min   |
-| Apply configuration | < 0.5 min |
-
-### Why does SNI installation take so long?
-
-Nginx in this script is managed by source compilation.
-
-Compared with installing prebuilt binaries, compilation advantages are:
-
-1. Better runtime performance (compiled with -O3 optimization)
-2. Newer software versions
-
-The downside is long compilation time.
-
 ## Install Paths
 
-**Xray-script:** `/usr/local/xray-script`
-
-**Nginx:** `/usr/local/nginx`
-
-**Cloudreve:** `$HOME/.xray-script/docker/cloudreve`
-
-**Cloudflare-warp:** `$HOME/.xray-script/docker/warp`
-
-**Xray:** See **[Xray-install](https://github.com/XTLS/Xray-install)**
+| Item | Path |
+| --- | --- |
+| Xray-script | `/usr/local/xray-script` |
+| Script configuration | `$HOME/.xray-script` |
+| Xray binary | `/usr/local/bin/xray` |
+| Xray configuration | `/usr/local/etc/xray` |
+| Xray GeoData | `/usr/local/share/xray` |
+| Xray logs | `/var/log/xray` |
+| Xray runtime socket | `/run/xray-script/xray` |
+| Nginx | `/usr/local/nginx` |
+| Nginx logs | `/var/log/nginx` |
+| Nginx runtime socket | `/run/xray-script/nginx` |
+| systemd services | `/etc/systemd/system/xray.service`, `/etc/systemd/system/nginx.service` |
+| Cloudreve v3 | `$HOME/.xray-script/docker/cloudreve/v3` |
+| Cloudreve v4 | `$HOME/.xray-script/docker/cloudreve/v4` |
+| Cloudflare WARP | `$HOME/.xray-script/docker/cloudflare-warp` |
+| acme.sh | `$HOME/.acme.sh` |
 
 ## Dependency List
 
-When using SNI configuration, the script may install the following dependencies:
+The script checks and installs the following Debian dependencies as needed. Xray, Docker, and Nginx repository components are handled by their respective official installation flows.
 
-| Purpose                            | Debian-based                         | Red Hat-based        |
-| ---------------------------------- | ------------------------------------ | -------------------- |
-| yumdb set (mark package manually installed) |                              | yum-utils            |
-| dnf config-manager                 |                                      | dnf-plugins-core     |
-| IP retrieval                       | iproute2                             | iproute              |
-| DNS resolution                     | dnsutils                             | bind-utils           |
-| wget                               | wget                                 | wget                 |
-| curl                               | curl                                 | curl                 |
-| wget/curl https                    | ca-certificates                      | ca-certificates      |
-| kill/pkill/ps/sysctl/free          | procps                               | procps-ng            |
-| epel repository                    |                                      | epel-release         |
-| epel repository                    |                                      | epel-next-release    |
-| remi repository                    |                                      | remi-release         |
-| Firewall                           | ufw                                  | firewalld            |
-| **Build basics:**                  |                                      |                      |
-| Download source files              | wget                                 | wget                 |
-| Extract tar source files           | tar                                  | tar                  |
-| Extract tar.gz source files        | gzip                                 | gzip                 |
-| gcc                                | gcc                                  | gcc                  |
-| g++                                | g++                                  | gcc-c++              |
-| make                               | make                                 | make                 |
-| **acme.sh dependencies:**          |                                      |                      |
-|                                    | curl                                 | curl                 |
-|                                    | openssl                              | openssl              |
-|                                    | cron                                 | crontabs             |
-| **Build openssl:**                 |                                      |                      |
-|                                    | perl-base (included in libperl-dev) | perl-IPC-Cmd         |
-|                                    | perl-modules-5.32 (included in libperl-dev) | perl-Getopt-Long |
-|                                    | libperl5.32 (included in libperl-dev) | perl-Data-Dumper   |
-|                                    |                                      | perl-FindBin         |
-| **Build Brotli:**                  |                                      |                      |
-|                                    | git                                  | git                  |
-|                                    | libbrotli-dev                        | brotli-devel         |
-| **Build Nginx:**                   |                                      |                      |
-|                                    | libpcre2-dev                         | pcre2-devel          |
-|                                    | zlib1g-dev                           | zlib-devel           |
-| --with-http_xslt_module            | libxml2-dev                          | libxml2-devel        |
-| --with-http_xslt_module            | libxslt1-dev                         | libxslt-devel        |
-| --with-http_image_filter_module    | libgd-dev                            | gd-devel             |
-| --with-google_perftools_module     | libgoogle-perftools-dev              | gperftools-devel     |
-| --with-http_geoip_module           | libgeoip-dev                         | geoip-devel          |
-| --with-http_perl_module            |                                      | perl-ExtUtils-Embed  |
-|                                    | libperl-dev                          | perl-devel           |
+| Purpose | Dependencies |
+| --- | --- |
+| Base runtime and downloads | `ca-certificates`, `curl`, `wget`, `git`, `jq`, `tzdata`, `qrencode`, `socat` |
+| System management | `cron`, `bsdmainutils`, `iproute2`, `procps`, `dnsutils` |
+| Nginx build basics | `gcc`, `g++`, `make`, `tar`, `gzip`, `perl-base`, `perl` |
+| Nginx build libraries | `libpcre2-dev`, `zlib1g-dev`, `libxml2-dev`, `libxslt1-dev`, `libgd-dev`, `libgeoip-dev`, `libgoogle-perftools-dev`, `libperl-dev`, `libbrotli-dev` |
+| SSL and certificates | `openssl`, `curl`, `cron` |
+| Xray | Installed and managed by [Xray-install](https://github.com/XTLS/Xray-install) |
+| SNI web components | Docker Engine and Docker Compose are installed on demand; Cloudreve and Cloudflare WARP containers are built when selected |
+| BBR | The Linux kernel must provide the `tcp_bbr` module; `sch_fq` is recommended |
 
 ## Acknowledgements
 
