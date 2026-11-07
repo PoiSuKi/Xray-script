@@ -77,6 +77,7 @@
 9. v2026.11.05-r6 skips `nginx.service` state checks when the script-managed Nginx is not installed, removing the systemd `Failed to get unit file state for nginx.service` message from Xray-only configurations.
 10. v2026.11.05-r7 preserves custom UUID input as a single argument and displays `SupportX25519MLKEM768` in the terminal client configuration.
 11. v2026.11.07 separates SNI runtime socket directories for the Nginx and Xray service users, and adds XHTTP/TLS `stream-one`, H2 ALPN validation, minimum Xray version checks, and SNI domain-edit protection. Re-apply SNI configuration once after upgrading to migrate socket paths.
+12. v2026.11.07-r1 updates the tested systems to Debian 11, 12, and 13, and clarifies the compatibility note for other systems.
 
 ## Share Links
 
@@ -166,14 +167,11 @@ WARP Proxy : Running
 
 | Platform | Version    |
 | -------- | ---------- |
-| Debian   | 10, 11, 12 |
-| Ubuntu   | 20, 22, 24 |
-| CentOS   | 7, 8, 9    |
-| Rocky    | 8, 9       |
+| Debian   | 11, 12, 13 |
 
-The distributions above were tested on Vultr.
+The distributions above have been tested successfully.
 
-Other Debian-based and Red Hat-based systems may work, but are untested and may have issues.
+Other systems may work, but are untested and may have issues.
 
 ## Installation Time Notes
 

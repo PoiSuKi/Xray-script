@@ -76,6 +76,7 @@
 9. v2026.11.05-r6 版本修复纯 Xray 配置在未安装 Nginx 时仍检查 `nginx.service`，导致 systemd 输出 `Failed to get unit file state for nginx.service` 的问题。
 10. v2026.11.05-r7 版本修复自定义 UUID 输入被 shell 拆分的问题，并在终端客户端配置中显示 `SupportX25519MLKEM768`。
 11. v2026.11.07 版本重构 SNI 运行时 Socket 目录，使 Nginx 与 Xray 专用用户权限和启停生命周期隔离；同时增加 XHTTP/TLS `stream-one`、H2 ALPN 校验、最低 Xray 版本检查和 SNI 域名修改保护。升级后请重新应用一次 SNI 配置以迁移 Socket 路径。
+12. v2026.11.07-r1 版本将已测试系统更新为 Debian 11、12、13，并调整其他系统的兼容性说明。
 
 ## 分享链接
 
@@ -165,14 +166,11 @@ WARP Proxy : 已启动
 
 | Platform | Version    |
 | -------- | ---------- |
-| Debian   | 10, 11, 12 |
-| Ubuntu   | 20, 22, 24 |
-| CentOS   | 7, 8, 9    |
-| Rocky    | 8, 9       |
+| Debian   | 11, 12, 13 |
 
-以上发行版均通过 Vultr 测试安装。
+以上发行版均通过测试安装。
 
-其他 Debian 基系统与 Red Hat 基系统可能能用，但未测试过，可能存在问题。
+其他系统可能能用，但未测试过，可能存在问题。
 
 ## 安装时长说明
 
