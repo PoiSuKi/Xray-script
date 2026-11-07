@@ -116,6 +116,7 @@ function load_i18n() {
 # =============================================================================
 function urlencode() {
     local input # 声明局部变量存储输入
+    local LC_ALL=C
 
     # 如果没有传入参数，则从标准输入读取
     if [[ $# -eq 0 ]]; then
@@ -316,7 +317,9 @@ EOF
 # =============================================================================
 function show_client_config() {
     local support_x25519mlkem768='false'
-    [[ "${CLIENT_CONFIG[security],,}" == 'reality' ]] && support_x25519mlkem768='true'
+    if [[ "${CLIENT_CONFIG[security],,}" == 'reality' || "${XHTTP_EXTRA}" == *'"security": "reality"'* ]]; then
+        support_x25519mlkem768='true'
+    fi
     # 使用 Here Document 打印客户端配置的标题和各项参数
     cat <<EOF
 ------------------ $(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.client")(${CLIENT_CONFIG[tag]}) ------------------
@@ -348,13 +351,22 @@ EOF
 # =============================================================================
 function get_share_link_component() {
     local xhttp_mode='auto'
-    [[ "${CLIENT_CONFIG[security],,}" == 'tls' ]] && xhttp_mode='stream-one'
+    local password_encoded=''
+    local seed_encoded=''
+    if [[ -n "${XHTTP_MODE_OVERRIDE:-}" ]]; then
+        xhttp_mode="${XHTTP_MODE_OVERRIDE}"
+    elif [[ "${CLIENT_CONFIG[security],,}" == 'tls' ]]; then
+        # TLS CDN 优先使用官方兼容性最好的 packet-up；stream-up 依赖 CDN 的 gRPC/流式上传支持。
+        xhttp_mode='packet-up'
+    fi
+    password_encoded="$(urlencode "${CLIENT_CONFIG[password]}")"
+    seed_encoded="$(urlencode "${CLIENT_CONFIG[seed]}")"
     # 生成 VLESS 协议基础链接部分 (协议://UUID@地址:端口?网络类型=...)
     SHARE_LINK_COMPONENT_VLESS="${CLIENT_CONFIG[protocol]}://${CLIENT_CONFIG[uuid]}@${CLIENT_CONFIG[remote_host]}:${CLIENT_CONFIG[port]}?type=${CLIENT_CONFIG[client_type]}"
     # 生成 Trojan 协议基础链接部分 (协议://密码@地址:端口?网络类型=...)
-    SHARE_LINK_COMPONENT_TROJAN="${CLIENT_CONFIG[protocol]}://${CLIENT_CONFIG[password]}@${CLIENT_CONFIG[remote_host]}:${CLIENT_CONFIG[port]}?type=${CLIENT_CONFIG[client_type]}"
+    SHARE_LINK_COMPONENT_TROJAN="${CLIENT_CONFIG[protocol]}://${password_encoded}@${CLIENT_CONFIG[remote_host]}:${CLIENT_CONFIG[port]}?type=${CLIENT_CONFIG[client_type]}"
     # 生成 mKCP 网络传输参数部分 (&seed=...)
-    SHARE_LINK_COMPONENT_MKCP="&seed=${CLIENT_CONFIG[seed]}"
+    SHARE_LINK_COMPONENT_MKCP="&seed=${seed_encoded}"
     # 生成 TLS 安全传输参数部分 (&security=tls&sni=...&alpn=h2&fp=chrome)
     SHARE_LINK_COMPONENT_TLS="&security=${CLIENT_CONFIG[security]}&sni=${CLIENT_CONFIG[server_name]}&alpn=h2&fp=chrome"
     # 生成 Reality 安全传输参数部分 (&security=reality&sni=...&pbk=...&sid=...&spx=%2F&fp=chrome)
@@ -468,10 +480,13 @@ function get_sni_tls_share_link() {
 # 返回值: 无 (直接修改全局变量 SHARE_LINK)
 # =============================================================================
 function get_sni_tls_down_share_link() {
+    local previous_mode_override="${XHTTP_MODE_OVERRIDE-}"
+    XHTTP_MODE_OVERRIDE='stream-up'
     # 首先获取 fallback 的 XHTTP 链接 (基础部分)
     get_fallback_xhttp_share_link
     # 在基础链接后追加额外的下行参数部分
     SHARE_LINK="${SHARE_LINK}${SHARE_LINK_COMPONENT_EXTRA}"
+    XHTTP_MODE_OVERRIDE="${previous_mode_override}"
 }
 
 # =============================================================================
@@ -481,10 +496,13 @@ function get_sni_tls_down_share_link() {
 # 返回值: 无 (直接修改全局变量 SHARE_LINK)
 # =============================================================================
 function get_sni_reality_down_share_link() {
+    local previous_mode_override="${XHTTP_MODE_OVERRIDE-}"
+    XHTTP_MODE_OVERRIDE='packet-up'
     # 首先获取 SNI + TLS 的链接 (基础部分)
     get_sni_tls_share_link
     # 在基础链接后追加额外的下行参数部分
     SHARE_LINK="${SHARE_LINK}${SHARE_LINK_COMPONENT_EXTRA}"
+    XHTTP_MODE_OVERRIDE="${previous_mode_override}"
 }
 
 # =============================================================================

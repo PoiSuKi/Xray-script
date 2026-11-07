@@ -283,15 +283,21 @@ function issue_certificate() {
     # 定义 Nginx 配置文件及其备份路径
     local nginx_conf="${NGINX_CONFIG_PATH}/nginx.conf"
     local nginx_conf_bak="${nginx_conf}.ssl_script.bak"
+    local nginx_conf_existed=0
+    local restore_nginx_on_exit=0
 
     # 如果原 Nginx 配置文件存在，则备份
+    rm -f "${nginx_conf_bak}"
     if [[ -f "${nginx_conf}" ]]; then
         cp -f "${nginx_conf}" "${nginx_conf_bak}" || print_error "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.issue.fail_backup_nginx" | sed "s|\${nginx_conf}|${nginx_conf}|")"
+        nginx_conf_existed=1
     fi
+    restore_nginx_on_exit=1
+    trap 'if [[ ${restore_nginx_on_exit:-0} -eq 1 ]]; then if [[ ${nginx_conf_existed:-0} -eq 1 && -f "${nginx_conf_bak}" ]]; then mv -f "${nginx_conf_bak}" "${nginx_conf}"; else rm -f "${nginx_conf}"; fi; fi' EXIT
 
     # 生成一个临时的 Nginx 配置文件，用于 ACME HTTP-01 验证
     cat >"${nginx_conf}" <<EOF
-user                 root;
+user                 nginx xray;
 pid                  /run/nginx.pid;
 worker_processes     1;
 events {
@@ -349,7 +355,6 @@ EOF
             [[ ${issue_status} -eq 0 ]] && break
         done
         if [[ ${issue_status} -ne 0 ]]; then
-            mv -f "${nginx_conf_bak}" "${nginx_conf}"
             print_error "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.issue.letsencrypt_fail")"
         fi
     else
@@ -380,21 +385,25 @@ EOF
                     [[ ${issue_status} -eq 0 ]] && break
                 done
                 if [[ ${issue_status} -ne 0 ]]; then
-                    mv -f "${nginx_conf_bak}" "${nginx_conf}"
                     print_error "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.issue.letsencrypt_fail")"
                 fi
             else
                 print_warn "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.issue.fail_first_attempt")"
                 local -a debug_issue_args=("${issue_args[@]}" --debug)
                 "${HOME}/.acme.sh/acme.sh" "${debug_issue_args[@]}"
-                mv -f "${nginx_conf_bak}" "${nginx_conf}"
                 print_error "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.issue.fail_ecc_issue")"
             fi
         fi
     fi
 
     # 签发成功后，恢复原始 Nginx 配置
-    mv -f "${nginx_conf_bak}" "${nginx_conf}"
+    if [[ ${nginx_conf_existed} -eq 1 ]]; then
+        mv -f "${nginx_conf_bak}" "${nginx_conf}" || print_error "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.issue.fail_install_cert")"
+    else
+        rm -f "${nginx_conf}"
+    fi
+    restore_nginx_on_exit=0
+    trap - EXIT
 
     # 安装签发的证书到指定路径，并设置 Nginx 重载命令
     "${HOME}/.acme.sh/acme.sh" --install-cert --ecc -d ${DOMAIN} \

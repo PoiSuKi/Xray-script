@@ -37,7 +37,7 @@ test_curl() {
     local user_agent=$1
     local protocol=$2
 
-    curl -A "${user_agent}" "${protocol}://${domain}" -s -o /dev/null || return 1
+    curl -f -A "${user_agent}" "${protocol}://${domain}" -s -o /dev/null || return 1
 }
 
 test_user_agents() {

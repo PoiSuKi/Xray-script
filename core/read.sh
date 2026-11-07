@@ -199,8 +199,8 @@ function main() {
     # 调用 read_input 函数显示提示信息
     read_input "$type" "$prompt"
 
-    # 从标准输入读取一行用户输入
-    read -r input
+    # 从标准输入读取一行用户输入；EOF 时明确失败，避免调用方无限重试
+    read -r input || exit 1
 
     # 输出用户输入的内容
     echo "$input"

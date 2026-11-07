@@ -13,7 +13,8 @@
   },
   "main": {
     "not_support": "Current script configuration type is not SNI, this feature is not available",
-    "handler_failed": "Operation failed; exited safely to avoid configuration or environment contamination"
+    "handler_failed": "Operation failed; exited safely to avoid configuration or environment contamination",
+    "read_failed": "Input ended before the operation completed"
   },
   "menu": {
     "choose": "Please choose an option",
@@ -103,7 +104,7 @@
       "info2": "Manage blocking or WARP routing",
       "info3": "Includes Nginx update, domain change, web config",
       "info4": "(Non-SNI) Change Xray listen port and restart service",
-      "info5": "geodata provided by  https://github.com/Loyalsoldier/v2ray-rules-dat ",
+      "info5": "geodata is updated through the official Xray update-geodata flow",
       "info6": "Update only the REALITY target and ServerName; leave all other settings unchanged"
     },
     "route_management": {
@@ -157,7 +158,7 @@
     },
     "xray": {
       "config_update": "Updating Xray configuration",
-      "min_version": "XHTTP/Fallback/SNI requires Xray v24.12.15 or later; current version: ${version}"
+      "min_version": "XHTTP/Trojan/Fallback/SNI requires Xray v25.3.6 or later; current version: ${version}"
     },
     "reality": {
       "read_failed": "Failed to read the current Xray configuration",
@@ -262,15 +263,16 @@
       "occupied_check": "Checking whether port is occupied: ",
       "occupied_fail": "Port is occupied, cannot continue SNI setup: ",
       "occupied_pass": "Port is not occupied: ",
-      "open_check": "Checking whether firewall allows TCP port: ",
-      "open_pass": "Firewall allows TCP port: ",
-      "open_fail": "Firewall does not allow TCP port: ",
+      "occupied_managed": "Port is owned by the script-managed Xray/Nginx, continuing: ",
+      "open_check": "Checking whether firewall allows port: ",
+      "open_pass": "Firewall allows port: ",
+      "open_fail": "Firewall does not allow port: ",
       "open_skip": "No active firewall policy detected, defaulting to open check pass: ",
       "firewall_active": "Detected active firewall: ",
-      "allow_try": "Trying to auto-allow TCP port: ",
-      "allow_pass": "TCP port auto-allowed: ",
-      "allow_fail": "Failed to auto-allow TCP port: ",
-      "manual_allow": "Please manually allow the TCP port and retry (example: ufw allow <port>/tcp or firewall-cmd --permanent --add-port=<port>/tcp && firewall-cmd --reload): ",
+      "allow_try": "Trying to auto-allow port: ",
+      "allow_pass": "Port auto-allowed: ",
+      "allow_fail": "Failed to auto-allow port: ",
+      "manual_allow": "Please manually allow the port and retry (example: ufw allow <port>/<protocol> or firewall-cmd --permanent --add-port=<port>/<protocol> && firewall-cmd --reload): ",
       "all_pass": "SNI required port checks passed"
     },
     "uuid": {
@@ -324,7 +326,8 @@
       "alpn_error": "The target domain did not negotiate ALPN h2",
       "alpn_pass": "ALPN h2 negotiation passed",
       "key_exchange_warn": "Does not use X25519 key exchange: ",
-      "key_exchange_pass": "Uses X25519 key exchange"
+      "key_exchange_pass": "Uses X25519 key exchange",
+      "redirect_error": "Target domain redirects over HTTP; use the final direct domain: "
     },
     "dns": {
       "check_start": "Checking if domain resolves to this host: ",
@@ -511,6 +514,7 @@
       "read_current_versions": "Reading the current versions of Nginx and OpenSSL.",
       "check_update": "Checking if an update is needed.",
       "start_update": "Updating Nginx.",
+      "up_to_date": "Nginx and OpenSSL are already up to date.",
       "smooth_upgrade": "Performing a smooth upgrade of Nginx...",
       "no_old_process": "Old Nginx process not found. Skipping subsequent steps."
     },

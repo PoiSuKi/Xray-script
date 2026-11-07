@@ -64,6 +64,7 @@
 7. v2026.11.05-r7 preserves custom UUID input as a single argument and displays `SupportX25519MLKEM768` in the terminal client configuration.
 8. v2026.11.07 separates SNI runtime socket directories for the Nginx and Xray service users, and adds XHTTP/TLS `stream-one`, H2 ALPN validation, minimum Xray version checks, and SNI domain-edit protection. Re-apply SNI configuration once after upgrading to migrate socket paths.
 9. v2026.11.07-r1 updates the tested systems to Debian 11, 12, and 13, and clarifies the compatibility note for other systems.
+10. v2026.11.08 synchronizes the official Xray installer with the installed version, adds transactional Xray config rollback, an unprivileged Nginx worker with atomic binary/module updates, DNS family checks, TCP timeouts, and HTTP redirect detection. Regular XHTTP TLS links through Cloudflare now use the more compatible `packet-up` mode, while split up/down links use `stream-up` as required by the official behavior.
 
 ## Share Links
 

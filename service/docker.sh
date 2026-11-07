@@ -203,7 +203,10 @@ function _os_full() {
 # =============================================================================
 function _os_ver() {
     # 调用 _os_full 函数获取完整版本信息，然后提取其中的数字和点
-    local main_ver="$(echo $(_os_full) | grep -oE "[0-9.]+")"
+    local os_full=''
+    local main_ver=''
+    os_full="$(_os_full)" || return 1
+    main_ver="$(printf '%s\n' "${os_full}" | grep -oE '[0-9.]+' | head -n 1)" || true
     # 输出主版本号 (第一个点号前的部分)
     printf -- "%s" "${main_ver%%.*}"
 }
@@ -277,21 +280,24 @@ function build_warp() {
 # 返回值: 容器的 IP 地址 (echo 输出)，或无输出
 # =============================================================================
 function enable_warp() {
-    # 检查名为 xray-script-warp 的容器是否已在运行
-    if ! docker ps --format "{{.Names}}" | grep -q "^xray-script-warp\$"; then
-        # 打印开始启用的信息
-        print_info "$(echo "$I18N_DATA" | jq -r '.docker.warp.enable.start')"
-        # 创建 Cloudflare WARP 容器所需的目录
-        mkdir -vp "${WARP_DIR}" >&2
+    # 打印开始启用的信息
+    print_info "$(echo "$I18N_DATA" | jq -r '.docker.warp.enable.start')"
+    # 创建 Cloudflare WARP 容器所需的目录
+    mkdir -vp "${WARP_DIR}" >&2 || print_error "$(echo "$I18N_DATA" | jq -r '.docker.warp.build.fail')"
+    if docker container inspect xray-script-warp >/dev/null 2>&1; then
+        if ! docker ps --format "{{.Names}}" | grep -q "^xray-script-warp\$"; then
+            docker start xray-script-warp >&2 || print_error "$(echo "$I18N_DATA" | jq -r '.docker.warp.build.fail')"
+        fi
+    else
         # 使用 docker run 命令启动容器，失败则调用 print_error 退出
         docker run -d --restart=always --name=xray-script-warp --log-driver json-file --log-opt max-size=100m --log-opt max-file=3 -v "${WARP_DIR}":/var/lib/cloudflare-warp:rw xray-script-warp >&2 || print_error "$(echo "$I18N_DATA" | jq -r '.docker.warp.build.fail')"
-        # 获取新启动容器的 IP 地址
-        local container_ip=$(get_container_ip xray-script-warp)
-        # 打印启用成功的消息，并包含容器 IP
-        print_info "$(echo "$I18N_DATA" | jq -r ".docker.warp.enable.success" | sed "s/\${container_ip}/${container_ip}/")"
-        # 输出容器 IP 地址
-        echo "${container_ip}"
     fi
+    local container_ip="$(get_container_ip xray-script-warp)"
+    [[ -n "${container_ip}" ]] || print_error "$(echo "$I18N_DATA" | jq -r '.docker.warp.build.fail')"
+    # 打印启用成功的消息，并包含容器 IP
+    print_info "$(echo "$I18N_DATA" | jq -r ".docker.warp.enable.success" | sed "s/\${container_ip}/${container_ip}/")"
+    # 输出容器 IP 地址
+    echo "${container_ip}"
 }
 
 # =============================================================================
@@ -301,16 +307,17 @@ function enable_warp() {
 # 返回值: 无 (执行停止和清理过程)
 # =============================================================================
 function disable_warp() {
-    # 检查名为 xray-script-warp 的容器是否在运行
-    if docker ps --format "{{.Names}}" | grep -q "^xray-script-warp\$"; then
+    # 已停止但存在的容器也必须清理
+    if docker container inspect xray-script-warp >/dev/null 2>&1; then
         # 打印停止容器的警告信息
         print_warn "$(echo "$I18N_DATA" | jq -r '.docker.warp.disable.stop')"
-        # 停止容器
-        docker stop xray-script-warp
+        if docker ps --format "{{.Names}}" | grep -q "^xray-script-warp\$"; then
+            docker stop xray-script-warp || print_error "$(echo "$I18N_DATA" | jq -r '.docker.warp.disable.stop')"
+        fi
         # 删除容器
-        docker rm xray-script-warp
+        docker rm xray-script-warp || print_error "$(echo "$I18N_DATA" | jq -r '.docker.warp.disable.stop')"
         # 删除镜像
-        docker image rm xray-script-warp
+        docker image rm xray-script-warp >/dev/null 2>&1 || true
         # 删除 WARP 数据目录
         rm -rf "${WARP_DIR}"
         # 打印禁用成功的消息
@@ -354,8 +361,8 @@ function install_cloudreve_v3() {
         # 打印启动服务的信息
         print_info "$(echo "$I18N_DATA" | jq -r '.docker.cloudreve_v3.start')"
         # 切换到 Cloudreve v3 目录并启动服务
-        cd "${CLOUDREVE_V3_DIR}"
-        docker compose up -d
+        cd "${CLOUDREVE_V3_DIR}" || print_error "failed to enter Cloudreve v3 directory"
+        docker compose up -d || print_error "failed to start Cloudreve v3"
         # 等待服务启动
         sleep 5
         # 获取并显示管理员账户信息
@@ -411,15 +418,15 @@ function reset_cloudreve_v3_admin() {
         # 打印重置账户的信息
         print_info "$(echo "$I18N_DATA" | jq -r '.docker.cloudreve_v3.reset')"
         # 切换到 Cloudreve v3 目录
-        cd "${CLOUDREVE_V3_DIR}"
+        cd "${CLOUDREVE_V3_DIR}" || print_error "failed to enter Cloudreve v3 directory"
         # 停止服务
-        docker compose down
+        docker compose down || print_error "failed to stop Cloudreve v3"
         # 删除数据库文件
         rm -rf "${CLOUDREVE_V3_DIR}/cloudreve.db"
         # 重新创建空的数据库文件
         touch "${CLOUDREVE_V3_DIR}/cloudreve.db"
         # 重启服务
-        docker compose up -d
+        docker compose up -d || print_error "failed to start Cloudreve v3"
         # 等待服务启动
         sleep 5
         # 获取并显示新的管理员账户信息
@@ -434,16 +441,19 @@ function reset_cloudreve_v3_admin() {
 # 返回值: 无 (执行卸载过程)
 # =============================================================================
 function purge_cloudreve_v3() {
-    # 检查名为 cloudreve_v3 的容器是否在运行
-    if docker ps --format "{{.Names}}" | grep -q "^cloudreve_v3\$"; then
+    # 已停止的 compose 项目也必须允许彻底清理
+    if [[ -d "${CLOUDREVE_V3_DIR}" ]] || docker container inspect cloudreve_v3 >/dev/null 2>&1; then
         # 打印彻底卸载的警告信息
         print_warn "$(echo "$I18N_DATA" | jq -r '.docker.cloudreve_v3.purge')"
-        # 切换到 Cloudreve v3 目录
-        cd "${CLOUDREVE_V3_DIR}"
-        # 停止服务
-        docker compose down
+        if [[ -d "${CLOUDREVE_V3_DIR}" ]]; then
+            # 停止服务
+            (cd "${CLOUDREVE_V3_DIR}" && docker compose down) ||
+                print_error "failed to stop Cloudreve v3"
+        elif docker container inspect cloudreve_v3 >/dev/null 2>&1; then
+            docker rm -f cloudreve_v3 >/dev/null 2>&1 || true
+        fi
         # 切换到用户主目录
-        cd "${HOME}"
+        cd "${HOME}" || print_error "failed to enter home directory"
         # 删除整个 Cloudreve v3 目录
         rm -rf "${CLOUDREVE_V3_DIR}"
     fi
@@ -464,8 +474,8 @@ function start_cloudreve_v3() {
             # 打印启动服务的信息
             print_info "$(echo "$I18N_DATA" | jq -r '.docker.cloudreve_v3.start_service')"
             # 切换到 Cloudreve v3 目录并启动服务
-            cd "${CLOUDREVE_V3_DIR}"
-            docker compose up -d
+            cd "${CLOUDREVE_V3_DIR}" || print_error "failed to enter Cloudreve v3 directory"
+            docker compose up -d || print_error "failed to start Cloudreve v3"
         else
             # 如果目录不存在，打印回退安装的信息
             print_info "$(echo "$I18N_DATA" | jq -r '.docker.cloudreve_v3.install_fallback')"
@@ -487,9 +497,9 @@ function stop_cloudreve_v3() {
         # 打印停止服务的警告信息
         print_warn "$(echo "$I18N_DATA" | jq -r '.docker.cloudreve_v3.stop')"
         # 切换到 Cloudreve v3 目录
-        cd "${CLOUDREVE_V3_DIR}"
+        cd "${CLOUDREVE_V3_DIR}" || print_error "failed to enter Cloudreve v3 directory"
         # 停止服务
-        docker compose down
+        docker compose down || print_error "failed to stop Cloudreve v3"
     fi
 }
 
@@ -517,8 +527,8 @@ function install_cloudreve_v4() {
         # 打印启动服务的信息
         print_info "$(echo "$I18N_DATA" | jq -r '.docker.cloudreve_v4.start')"
         # 切换到 Cloudreve v4 目录并启动服务
-        cd "${CLOUDREVE_V4_DIR}"
-        docker compose up -d
+        cd "${CLOUDREVE_V4_DIR}" || print_error "failed to enter Cloudreve v4 directory"
+        docker compose up -d || print_error "failed to start Cloudreve v4"
     fi
 }
 
@@ -535,13 +545,13 @@ function update_cloudreve_v4() {
         # 打印更新服务的信息
         print_info "$(echo "$I18N_DATA" | jq -r '.docker.cloudreve_v4.update')"
         # 切换到 Cloudreve v4 目录
-        cd "${CLOUDREVE_V4_DIR}"
+        cd "${CLOUDREVE_V4_DIR}" || print_error "failed to enter Cloudreve v4 directory"
         # 停止服务
-        docker compose down
+        docker compose down || print_error "failed to stop Cloudreve v4"
         # 拉取最新的镜像
-        docker compose pull
+        docker compose pull || print_error "failed to pull Cloudreve v4 image"
         # 重启服务
-        docker compose up -d
+        docker compose up -d || print_error "failed to start Cloudreve v4"
     fi
 }
 
@@ -552,16 +562,19 @@ function update_cloudreve_v4() {
 # 返回值: 无 (执行卸载过程)
 # =============================================================================
 function purge_cloudreve_v4() {
-    # 检查名为 cloudreve_v4 的容器是否在运行
-    if docker ps --format "{{.Names}}" | grep -q "^cloudreve_v4\$"; then
+    # 已停止的 compose 项目也必须允许彻底清理
+    if [[ -d "${CLOUDREVE_V4_DIR}" ]] || docker container inspect cloudreve_v4 >/dev/null 2>&1; then
         # 打印彻底卸载的警告信息
         print_warn "$(echo "$I18N_DATA" | jq -r '.docker.cloudreve_v4.purge')"
-        # 切换到 Cloudreve v4 目录
-        cd "${CLOUDREVE_V4_DIR}"
-        # 停止服务
-        docker compose down
+        if [[ -d "${CLOUDREVE_V4_DIR}" ]]; then
+            # 停止服务
+            (cd "${CLOUDREVE_V4_DIR}" && docker compose down) ||
+                print_error "failed to stop Cloudreve v4"
+        elif docker container inspect cloudreve_v4 >/dev/null 2>&1; then
+            docker rm -f cloudreve_v4 >/dev/null 2>&1 || true
+        fi
         # 切换到用户主目录
-        cd "${HOME}"
+        cd "${HOME}" || print_error "failed to enter home directory"
         # 删除整个 Cloudreve v4 目录
         rm -rf "${CLOUDREVE_V4_DIR}"
     fi
@@ -582,8 +595,8 @@ function start_cloudreve_v4() {
             # 打印启动服务的信息
             print_info "$(echo "$I18N_DATA" | jq -r '.docker.cloudreve_v4.start_service')"
             # 切换到 Cloudreve v4 目录并启动服务
-            cd "${CLOUDREVE_V4_DIR}"
-            docker compose up -d
+            cd "${CLOUDREVE_V4_DIR}" || print_error "failed to enter Cloudreve v4 directory"
+            docker compose up -d || print_error "failed to start Cloudreve v4"
         else
             # 如果目录不存在，打印回退安装的信息
             print_info "$(echo "$I18N_DATA" | jq -r '.docker.cloudreve_v4.install_fallback')"
@@ -605,9 +618,9 @@ function stop_cloudreve_v4() {
         # 打印停止服务的警告信息
         print_warn "$(echo "$I18N_DATA" | jq -r '.docker.cloudreve_v4.stop')"
         # 切换到 Cloudreve v4 目录
-        cd "${CLOUDREVE_V4_DIR}"
+        cd "${CLOUDREVE_V4_DIR}" || print_error "failed to enter Cloudreve v4 directory"
         # 停止服务
-        docker compose down
+        docker compose down || print_error "failed to stop Cloudreve v4"
     fi
 }
 
@@ -621,8 +634,11 @@ function stop_cloudreve_v4() {
 function clean_container_logs() {
     # 获取容器名称或 ID
     local container_name_or_id="${1:-xray-script-warp}"
+    local container_log_path=''
     # 找到容器的日志文件并清空
-    truncate -s 0 $(docker inspect --format='{{.LogPath}}' "${container_name_or_id}")
+    container_log_path="$(docker inspect --format='{{.LogPath}}' "${container_name_or_id}")" || return 1
+    [[ -n "${container_log_path}" && -f "${container_log_path}" ]] || return 1
+    truncate -s 0 "${container_log_path}"
 }
 
 # =============================================================================

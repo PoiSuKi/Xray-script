@@ -73,7 +73,7 @@ function generate_random() {
 # =============================================================================
 function generate_port() {
     # 调用 generate_random 函数，指定范围为 1025 到 65535
-    echo $(generate_random 1025 65535)
+    printf '%s\n' "$(generate_random 1025 65535)"
 }
 
 # =============================================================================
@@ -275,11 +275,11 @@ function generate_short_ids() {
         if [[ $arg =~ ^[0-8]$ ]]; then
             # 调用 generate_short_id 生成对应长度的 ID，
             # 并使用 jq -R 将其转换为 JSON 字符串格式后添加到 ids 数组
-            ids+=($(generate_short_id "${arg}" | jq -R))
+            ids+=("$(generate_short_id "${arg}" | jq -R)")
         else
             # 如果不是数字，则直接将参数作为 ID 值，
             # 同样使用 jq -R 转换为 JSON 字符串格式后添加到 ids 数组
-            ids+=($(echo "${arg}" | jq -R))
+            ids+=("$(printf '%s\n' "${arg}" | jq -R)")
         fi
     done
 

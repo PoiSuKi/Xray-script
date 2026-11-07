@@ -60,14 +60,57 @@ readonly TMPFILE_DIR="$(mktemp -d -p "${PROJECT_ROOT}" -t nginxtemp.XXXXXXXX)" |
 # 定义 Nginx 和其日志的安装/存储路径
 readonly NGINX_PATH="/usr/local/nginx"   # Nginx 安装主目录
 readonly NGINX_LOG_PATH="/var/log/nginx" # Nginx 日志目录
+readonly NGINX_SYSTEM_BIN="/usr/sbin/nginx"
+readonly NGINX_SYSTEM_BIN_BACKUP="/usr/sbin/nginx.xray-script.bak"
+readonly NGINX_SERVICE_PATH="/etc/systemd/system/nginx.service"
+readonly NGINX_SERVICE_BACKUP="/etc/systemd/system/nginx.service.xray-script.bak"
 
 # --- 全局变量声明 ---
 # 声明用于存储是否启用 Brotli 模块选项、语言参数和国际化数据的全局变量
 declare IS_ENABLE_BROTLI="" # 存储用户是否选择启用 Brotli ('Y' 或 '')
 declare LANG_PARAM=''       # (未在脚本中实际使用，可能是预留)
 declare I18N_DATA=''        # 存储从 i18n JSON 文件中读取的全部数据
+declare APT_UPDATED=0       # 本次运行是否已经刷新过 apt 索引
 # 声明用于存储编译器优化标志的全局数组
 declare -a cflags=() # 存储 GCC 编译优化选项
+
+function install_nginx_binary_link() {
+    if [[ ( -e "${NGINX_SYSTEM_BIN}" || -L "${NGINX_SYSTEM_BIN}" ) && ! -e "${NGINX_SYSTEM_BIN_BACKUP}" ]] &&
+        [[ ! -L "${NGINX_SYSTEM_BIN}" || "$(readlink -f "${NGINX_SYSTEM_BIN}")" != "$(readlink -f "${NGINX_PATH}/sbin/nginx")" ]]; then
+        cp -a "${NGINX_SYSTEM_BIN}" "${NGINX_SYSTEM_BIN_BACKUP}" || return 1
+    fi
+    ln -sf "${NGINX_PATH}/sbin/nginx" "${NGINX_SYSTEM_BIN}"
+}
+
+function restore_nginx_binary_link() {
+    rm -f "${NGINX_SYSTEM_BIN}"
+    if [[ -e "${NGINX_SYSTEM_BIN_BACKUP}" ]]; then
+        mv -f "${NGINX_SYSTEM_BIN_BACKUP}" "${NGINX_SYSTEM_BIN}"
+    fi
+}
+
+function configure_nginx_worker_user() {
+    local nginx_conf="${NGINX_PATH}/conf/nginx.conf"
+    local temp_conf="${nginx_conf}.tmp.$$"
+
+    [[ -f "${nginx_conf}" ]] || return 0
+    {
+        printf 'user nginx xray;\n'
+        awk '!/^[[:space:]]*user[[:space:]]+/' "${nginx_conf}"
+    } >"${temp_conf}" || {
+        rm -f "${temp_conf}"
+        return 1
+    }
+    chmod --reference="${nginx_conf}" "${temp_conf}" || {
+        rm -f "${temp_conf}"
+        return 1
+    }
+    chown --reference="${nginx_conf}" "${temp_conf}" || {
+        rm -f "${temp_conf}"
+        return 1
+    }
+    mv -f "${temp_conf}" "${nginx_conf}"
+}
 
 # =============================================================================
 # 函数名称: egress
@@ -183,6 +226,31 @@ function cmd_exists() {
     fi
 }
 
+function ensure_nginx_runtime_user() {
+    local nologin_shell=''
+
+    if ! getent group xray >/dev/null 2>&1; then
+        groupadd --system xray || print_error "failed to create xray group"
+    fi
+    if ! id -u xray >/dev/null 2>&1; then
+        nologin_shell="$(command -v nologin || echo /bin/false)"
+        useradd --system --gid xray --home-dir /var/empty --shell "${nologin_shell}" xray ||
+            print_error "failed to create xray user"
+    fi
+    if ! getent group nginx >/dev/null 2>&1; then
+        groupadd --system nginx || print_error "failed to create nginx group"
+    fi
+    if ! id -u nginx >/dev/null 2>&1; then
+        nologin_shell="$(command -v nologin || echo /bin/false)"
+        useradd --system --gid nginx --home-dir /var/lib/nginx --shell "${nologin_shell}" nginx ||
+            print_error "failed to create nginx user"
+    fi
+    if getent group xray >/dev/null 2>&1 && ! id -nG nginx 2>/dev/null | tr ' ' '\n' | grep -Fxq 'xray'; then
+        usermod -aG xray nginx || print_error "failed to add nginx user to xray group"
+    fi
+    install -d -m 0755 -o nginx -g nginx /var/lib/nginx || print_error "failed to create nginx home"
+}
+
 # =============================================================================
 # 函数名称: _os
 # 功能描述: 检测当前操作系统的发行版名称。
@@ -242,7 +310,10 @@ function _os_full() {
 # =============================================================================
 function _os_ver() {
     # 调用 _os_full 函数获取完整版本信息，然后提取其中的数字和点
-    local main_ver="$(echo $(_os_full) | grep -oE "[0-9.]+")"
+    local os_full=''
+    local main_ver=''
+    os_full="$(_os_full)" || return 1
+    main_ver="$(printf '%s\n' "${os_full}" | grep -oE '[0-9.]+' | head -n 1)" || true
     # 输出主版本号 (第一个点号前的部分)
     printf -- "%s" "${main_ver%%.*}"
 }
@@ -339,7 +410,7 @@ function _install() {
             # 遍历并安装每个包（如果尚未安装）
             for package_name in ${packages_name}; do
                 if ! echo "${installed_packages}" | grep -iwq "${package_name}"; then
-                    _error_detect "dnf install -y "${package_name}""
+                    _error_detect "dnf install -y ${package_name}"
                 fi
             done
         else
@@ -349,18 +420,21 @@ function _install() {
             yum update -y
             for package_name in ${packages_name}; do
                 if ! echo "${installed_packages}" | grep -iwq "${package_name}"; then
-                    _error_detect "yum install -y "${package_name}""
+                    _error_detect "yum install -y ${package_name}"
                 fi
             done
         fi
         ;;
     # 处理 Debian 和 Ubuntu 系统
     ubuntu | debian)
-        apt update -y                                            # 更新包列表
+        if [[ ${APT_UPDATED} -eq 0 ]]; then
+            apt update -y || print_error "failed to update apt package lists"
+            APT_UPDATED=1
+        fi
         installed_packages="$(apt list --installed 2>/dev/null)" # 获取已安装包列表
         for package_name in ${packages_name}; do
             if ! echo "${installed_packages}" | grep -iwq "${package_name}"; then
-                _error_detect "apt install -y "${package_name}""
+                _error_detect "apt install -y ${package_name}"
             fi
         done
         ;;
@@ -426,7 +500,7 @@ function swap_on() {
 # =============================================================================
 function backup_files() {
     local backup_dir="$1"            # 获取要备份的目录路径
-    local current_date="$(date +%F)" # 获取当前日期 (YYYY-MM-DD)
+    local current_date="$(date +%F_%H%M%S)" # 获取当前时间，避免同日覆盖
     # 遍历目录中的所有文件
     for file in "${backup_dir}/"*; do
         if [[ -f "$file" ]]; then                                          # 检查是否为普通文件
@@ -474,65 +548,8 @@ function compile_dependencies() {
 # 返回值: 无 (直接修改全局数组 cflags)
 # =============================================================================
 function gen_cflags() {
-    # 初始化 cflags 数组，包含基本优化
-    cflags=('-g0' '-O3') # -g0: 不生成调试信息; -O3: 最高级别优化
-    # 检查 GCC 是否支持特定标志，如果支持则添加到 cflags 数组中
-    # 这些检查旨在移除可能导致性能下降或不必要的安全特性
-    if gcc -v --help 2>&1 | grep -qw "\\-fstack\\-reuse"; then
-        cflags+=('-fstack-reuse=all')
-    fi
-    if gcc -v --help 2>&1 | grep -qw "\\-fdwarf2\\-cfi\\-asm"; then
-        cflags+=('-fdwarf2-cfi-asm')
-    fi
-    if gcc -v --help 2>&1 | grep -qw "\\-fplt"; then
-        cflags+=('-fplt')
-    fi
-    if gcc -v --help 2>&1 | grep -qw "\\-ftrapv"; then
-        cflags+=('-fno-trapv')
-    fi
-    # 异常处理相关
-    if gcc -v --help 2>&1 | grep -qw "\\-fexceptions"; then
-        cflags+=('-fno-exceptions')
-    elif gcc -v --help 2>&1 | grep -qw "\\-fhandle\\-exceptions"; then
-        cflags+=('-fno-handle-exceptions')
-    fi
-    # unwind 表相关
-    if gcc -v --help 2>&1 | grep -qw "\\-funwind\\-tables"; then
-        cflags+=('-fno-unwind-tables')
-    fi
-    if gcc -v --help 2>&1 | grep -qw "\\-fasynchronous\\-unwind\\-tables"; then
-        cflags+=('-fno-asynchronous-unwind-tables')
-    fi
-    # 栈检查相关
-    if gcc -v --help 2>&1 | grep -qw "\\-fstack\\-check"; then
-        cflags+=('-fno-stack-check')
-    fi
-    if gcc -v --help 2>&1 | grep -qw "\\-fstack\\-clash\\-protection"; then
-        cflags+=('-fno-stack-clash-protection')
-    fi
-    if gcc -v --help 2>&1 | grep -qw "\\-fstack\\-protector"; then
-        cflags+=('-fno-stack-protector')
-    fi
-    # 控制流保护相关
-    if gcc -v --help 2>&1 | grep -qw "\\-fcf\\-protection="; then
-        cflags+=('-fcf-protection=none')
-    fi
-    # 分割栈相关
-    if gcc -v --help 2>&1 | grep -qw "\\-fsplit\\-stack"; then
-        cflags+=('-fno-split-stack')
-    fi
-    # sanitizer 相关
-    if gcc -v --help 2>&1 | grep -qw "\\-fsanitize"; then
-        >temp.c # 创建一个空的 C 文件用于测试
-        if gcc -E -fno-sanitize=all temp.c >/dev/null 2>&1; then
-            cflags+=('-fno-sanitize=all')
-        fi
-        rm temp.c # 删除临时文件
-    fi
-    # instrumentation 相关
-    if gcc -v --help 2>&1 | grep -qw "\\-finstrument\\-functions"; then
-        cflags+=('-fno-instrument-functions')
-    fi
+    # 只保留常规优化，不关闭栈保护、CFI、CET 等编译器保护项。
+    cflags=('-g0' '-O3')
 }
 
 # =============================================================================
@@ -542,13 +559,14 @@ function gen_cflags() {
 # 返回值: 无 (执行下载、配置和编译过程)
 # =============================================================================
 function source_compile() {
-    cd "${TMPFILE_DIR}" # 切换到临时目录
+    cd "${TMPFILE_DIR}" || print_error "failed to enter Nginx build directory" # 切换到临时目录
     print_info "$(echo "$I18N_DATA" | jq -r '.nginx.compile.fetch_versions')"
     # 从 Nginx 官方下载页获取当前主线版本
     local nginx_version
     nginx_version="$(get_latest_nginx_version)" || print_error "failed to fetch the latest Nginx version"
     # 获取最新的 OpenSSL 标签名 (格式为 openssl-x.y.z)
     local openssl_version="openssl-$(wget -qO- --no-check-certificate https://api.github.com/repos/openssl/openssl/tags | grep 'name' | cut -d\" -f4 | grep -Eoi '^openssl-([0-9]\.?){3}$' | head -1)"
+    [[ "${openssl_version}" != 'openssl-' ]] || print_error "failed to fetch the latest OpenSSL version"
 
     # 生成编译器优化标志
     gen_cflags
@@ -569,11 +587,11 @@ function source_compile() {
     if [[ "${is_enable_brotli}" =~ ^[Yy]$ ]]; then
         print_info "$(echo "$I18N_DATA" | jq -r '.nginx.compile.fetch_brotli')"
         _error_detect "git clone https://github.com/google/ngx_brotli && cd ngx_brotli && git submodule update --init"
-        cd "${TMPFILE_DIR}" # 返回临时目录
+        cd "${TMPFILE_DIR}" || print_error "failed to return to Nginx build directory" # 返回临时目录
     fi
 
     # 进入 Nginx 源码目录
-    cd "${nginx_version}"
+    cd "${nginx_version}" || print_error "failed to enter Nginx source directory"
 
     # 对 Nginx 源码进行一些 sed 修改，以优化 Perl 模块的编译
     sed -i "s/OPTIMIZE[ \\t]*=>[ \\t]*'-O'/OPTIMIZE          => '-O3'/g" src/http/modules/perl/Makefile.PL
@@ -584,10 +602,10 @@ function source_compile() {
     print_info "$(echo "$I18N_DATA" | jq -r '.nginx.compile.configure')"
     if [[ "${is_enable_brotli}" =~ ^[Yy]$ ]]; then
         # 如果启用 Brotli，则添加 --add-module 选项
-        ./configure --prefix="${NGINX_PATH}" --user=root --group=root --with-threads --with-file-aio --with-http_ssl_module --with-http_v2_module --with-http_v3_module --with-http_realip_module --with-http_addition_module --with-http_xslt_module=dynamic --with-http_image_filter_module=dynamic --with-http_geoip_module=dynamic --with-http_sub_module --with-http_dav_module --with-http_flv_module --with-http_mp4_module --with-http_gunzip_module --with-http_gzip_static_module --with-http_auth_request_module --with-http_random_index_module --with-http_secure_link_module --with-http_degradation_module --with-http_slice_module --with-http_stub_status_module --with-http_perl_module=dynamic --with-mail=dynamic --with-mail_ssl_module --with-stream --with-stream_ssl_module --with-stream_realip_module --with-stream_geoip_module=dynamic --with-stream_ssl_preread_module --with-google_perftools_module --add-module="../ngx_brotli" --with-compat --with-cc-opt="${cflags[*]}" --with-openssl="../${openssl_version}" --with-openssl-opt="${cflags[*]}"
+        ./configure --prefix="${NGINX_PATH}" --user=nginx --group=xray --with-threads --with-file-aio --with-http_ssl_module --with-http_v2_module --with-http_v3_module --with-http_realip_module --with-http_addition_module --with-http_xslt_module=dynamic --with-http_image_filter_module=dynamic --with-http_geoip_module=dynamic --with-http_sub_module --with-http_dav_module --with-http_flv_module --with-http_mp4_module --with-http_gunzip_module --with-http_gzip_static_module --with-http_auth_request_module --with-http_random_index_module --with-http_secure_link_module --with-http_degradation_module --with-http_slice_module --with-http_stub_status_module --with-http_perl_module=dynamic --with-mail=dynamic --with-mail_ssl_module --with-stream --with-stream_ssl_module --with-stream_realip_module --with-stream_geoip_module=dynamic --with-stream_ssl_preread_module --with-google_perftools_module --add-module="../ngx_brotli" --with-compat --with-cc-opt="${cflags[*]}" --with-openssl="../${openssl_version}" --with-openssl-opt="${cflags[*]}"
     else
         # 不启用 Brotli
-        ./configure --prefix="${NGINX_PATH}" --user=root --group=root --with-threads --with-file-aio --with-http_ssl_module --with-http_v2_module --with-http_v3_module --with-http_realip_module --with-http_addition_module --with-http_xslt_module=dynamic --with-http_image_filter_module=dynamic --with-http_geoip_module=dynamic --with-http_sub_module --with-http_dav_module --with-http_flv_module --with-http_mp4_module --with-http_gunzip_module --with-http_gzip_static_module --with-http_auth_request_module --with-http_random_index_module --with-http_secure_link_module --with-http_degradation_module --with-http_slice_module --with-http_stub_status_module --with-http_perl_module=dynamic --with-mail=dynamic --with-mail_ssl_module --with-stream --with-stream_ssl_module --with-stream_realip_module --with-stream_geoip_module=dynamic --with-stream_ssl_preread_module --with-google_perftools_module --with-compat --with-cc-opt="${cflags[*]}" --with-openssl="../${openssl_version}" --with-openssl-opt="${cflags[*]}"
+        ./configure --prefix="${NGINX_PATH}" --user=nginx --group=xray --with-threads --with-file-aio --with-http_ssl_module --with-http_v2_module --with-http_v3_module --with-http_realip_module --with-http_addition_module --with-http_xslt_module=dynamic --with-http_image_filter_module=dynamic --with-http_geoip_module=dynamic --with-http_sub_module --with-http_dav_module --with-http_flv_module --with-http_mp4_module --with-http_gunzip_module --with-http_gzip_static_module --with-http_auth_request_module --with-http_random_index_module --with-http_secure_link_module --with-http_degradation_module --with-http_slice_module --with-http_stub_status_module --with-http_perl_module=dynamic --with-mail=dynamic --with-mail_ssl_module --with-stream --with-stream_ssl_module --with-stream_realip_module --with-stream_geoip_module=dynamic --with-stream_ssl_preread_module --with-google_perftools_module --with-compat --with-cc-opt="${cflags[*]}" --with-openssl="../${openssl_version}" --with-openssl-opt="${cflags[*]}"
     fi
 
     print_info "$(echo "$I18N_DATA" | jq -r '.nginx.compile.swap')"
@@ -608,9 +626,9 @@ function source_compile() {
 function source_install() {
     source_compile || return 1 # 先执行编译
     print_info "$(echo "$I18N_DATA" | jq -r '.nginx.install.start_install')"
-    make install                                      # 执行安装 (将文件复制到 --prefix 指定的目录)
-    mkdir -p /var/log/nginx                           # 创建日志目录
-    ln -sf "${NGINX_PATH}/sbin/nginx" /usr/sbin/nginx # 创建软链接以便全局使用 nginx 命令
+    make install || print_error "failed to install Nginx files"
+    mkdir -p "${NGINX_LOG_PATH}" || print_error "failed to create Nginx log directory"
+    install_nginx_binary_link || print_error "failed to install Nginx command link"
 }
 
 # =============================================================================
@@ -625,6 +643,7 @@ function source_update() {
     local latest_nginx_version
     latest_nginx_version="$(get_latest_nginx_version)" || print_error "failed to fetch the latest Nginx version"
     local latest_openssl_version="$(wget -qO- --no-check-certificate https://api.github.com/repos/openssl/openssl/tags | grep 'name' | cut -d\" -f4 | grep -Eoi '^openssl-([0-9]\.?){3}$' | head -1)"
+    [[ "${latest_openssl_version}" != 'openssl-' ]] || print_error "failed to fetch the latest OpenSSL version"
 
     print_info "$(echo "$I18N_DATA" | jq -r '.nginx.update.read_current_versions')"
     # 获取当前安装的 Nginx 和 OpenSSL 版本
@@ -634,38 +653,70 @@ function source_update() {
     print_info "$(echo "$I18N_DATA" | jq -r '.nginx.update.check_update')"
     # 仅当任一组件存在更高版本时更新，避免版本相同时重复编译
     if _version_gt "${latest_nginx_version#*-}" "${current_version_nginx}" || _version_gt "${latest_openssl_version#*-}" "${current_version_openssl}"; then
-        source_compile # 重新编译新版本
+        compile_dependencies
+        source_compile || print_error "failed to compile the new Nginx version"
         print_info "$(echo "$I18N_DATA" | jq -r '.nginx.update.start_update')"
-        # 备份旧的 nginx 二进制文件
-        mv "${NGINX_PATH}/sbin/nginx" "${NGINX_PATH}/sbin/nginx_$(date +%F)"
-        # 备份旧的动态模块
-        backup_files "${NGINX_PATH}/modules"
-        # 复制新编译的 nginx 二进制文件和动态模块
-        cp objs/nginx "${NGINX_PATH}/sbin/"
-        cp objs/*.so "${NGINX_PATH}/modules/"
-        # 更新软链接
-        ln -sf "${NGINX_PATH}/sbin/nginx" /usr/sbin/nginx
+        local old_binary="${NGINX_PATH}/sbin/nginx"
+        local new_binary="${old_binary}.new"
+        local binary_backup="${old_binary}.backup.$(date +%Y%m%d%H%M%S)"
+        local modules_dir="${NGINX_PATH}/modules"
+        local modules_backup="${TMPFILE_DIR}/modules.backup"
+        local modules_staged="${TMPFILE_DIR}/modules.new"
 
-        # 如果 Nginx 服务正在运行，则执行平滑升级
+        mkdir -p "${modules_backup}" "${modules_staged}" || print_error "failed to prepare Nginx module staging"
+        if [[ -d "${modules_dir}" ]]; then
+            cp -a "${modules_dir}/." "${modules_backup}/" || print_error "failed to back up Nginx modules"
+        fi
+        if ! cp -f objs/nginx "${new_binary}"; then
+            print_error "failed to stage the new Nginx binary"
+        fi
+        if ! cp -f objs/*.so "${modules_staged}/"; then
+            rm -f "${new_binary}"
+            print_error "failed to stage the new Nginx modules"
+        fi
+        if ! mv -f "${old_binary}" "${binary_backup}"; then
+            rm -f "${new_binary}"
+            print_error "failed to back up the old Nginx binary"
+        fi
+        if ! mv -f "${new_binary}" "${old_binary}"; then
+            mv -f "${binary_backup}" "${old_binary}"
+            print_error "failed to activate the new Nginx binary"
+        fi
+        if ! rm -rf "${modules_dir}" || ! mkdir -p "${modules_dir}" || ! cp -a "${modules_staged}/." "${modules_dir}/"; then
+            mv -f "${binary_backup}" "${old_binary}"
+            rm -rf "${modules_dir}"
+            cp -a "${modules_backup}" "${modules_dir}" || true
+            print_error "failed to install new Nginx modules"
+        fi
+        # 更新软链接，并保留发行版原有的 /usr/sbin/nginx
+        if ! install_nginx_binary_link; then
+            rm -rf "${modules_dir}"
+            cp -a "${modules_backup}" "${modules_dir}" || true
+            mv -f "${binary_backup}" "${old_binary}"
+            print_error "failed to update the Nginx command link"
+        fi
+
+        # 用实际生效的二进制与模块组合验证配置，再进行短暂重启。
+        if ! "${old_binary}" -t -p "${NGINX_PATH}/" -c "${NGINX_CONFIG_PATH}/nginx.conf" >/dev/null 2>&1; then
+            rm -rf "${modules_dir}"
+            cp -a "${modules_backup}" "${modules_dir}" || true
+            mv -f "${binary_backup}" "${old_binary}"
+            print_error "new Nginx binary and modules failed configuration test"
+        fi
         if systemctl is-active --quiet nginx; then
-            print_info "$(echo "$I18N_DATA" | jq -r '.nginx.update.smooth_upgrade')"
-            # 启动新的 Nginx 主进程 (旧进程仍在运行)
-            kill -USR2 $(cat /run/nginx.pid)
-            # 检查旧主进程是否存在
-            if [[ -e "/run/nginx.pid.oldbin" ]]; then
-                # 优雅地关闭旧工作进程
-                kill -WINCH $(cat /run/nginx.pid.oldbin)
-                # 重新打开日志文件
-                kill -HUP $(cat /run/nginx.pid.oldbin)
-                # 优雅地退出旧主进程
-                kill -QUIT $(cat /run/nginx.pid.oldbin)
-            else
-                print_info "$(echo "$I18N_DATA" | jq -r '.nginx.update.no_old_process')"
+            if ! systemctl restart nginx; then
+                rm -rf "${modules_dir}"
+                cp -a "${modules_backup}" "${modules_dir}" || true
+                mv -f "${binary_backup}" "${old_binary}"
+                systemctl restart nginx >/dev/null 2>&1 || true
+                print_error "failed to restart Nginx with the new binary"
             fi
         fi
+        rm -f "${binary_backup}"
         return 0 # 表示执行了更新
     fi
-    return 1 # 表示无需更新
+    print_info "$(echo "$I18N_DATA" | jq -r '.nginx.update.up_to_date')"
+    return 0
 }
 
 # =============================================================================
@@ -676,10 +727,14 @@ function source_update() {
 # =============================================================================
 function purge_nginx() {
     print_info "$(echo "$I18N_DATA" | jq -r '.nginx.purge.start_purge')"
-    systemctl stop nginx                     # 停止 Nginx 服务
+    systemctl disable nginx 2>/dev/null || true
+    systemctl stop nginx 2>/dev/null || true # 停止 Nginx 服务
     rm -rf "${NGINX_PATH}"                   # 删除安装目录
-    rm -rf /usr/sbin/nginx                   # 删除软链接
-    rm -rf /etc/systemd/system/nginx.service # 删除 systemd 服务文件
+    restore_nginx_binary_link                # 恢复发行版原有命令（如果存在）
+    rm -f "${NGINX_SERVICE_PATH}"
+    if [[ -e "${NGINX_SERVICE_BACKUP}" ]]; then
+        mv -f "${NGINX_SERVICE_BACKUP}" "${NGINX_SERVICE_PATH}"
+    fi
     rm -rf "${NGINX_LOG_PATH}"               # 删除日志目录
     rm -rf /run/xray-script/nginx            # 删除 Nginx 运行时 Socket 目录
     systemctl daemon-reload                  # 重新加载 systemd 配置
@@ -694,8 +749,15 @@ function purge_nginx() {
 # =============================================================================
 function systemctl_config_nginx() {
     print_info "$(echo "$I18N_DATA" | jq -r '.nginx.service.configure')"
+    configure_nginx_worker_user || print_error "failed to configure Nginx worker user"
+    if [[ -f "${NGINX_SERVICE_PATH}" && ! -e "${NGINX_SERVICE_BACKUP}" ]] &&
+        ! grep -Eq 'Managed by Xray-script|xray-script/nginx|UMask=0007|Group=xray' "${NGINX_SERVICE_PATH}"; then
+        cp -a "${NGINX_SERVICE_PATH}" "${NGINX_SERVICE_BACKUP}" ||
+            print_error "failed to back up Nginx systemd service"
+    fi
     # 使用 here document 创建服务文件内容
-    cat >/etc/systemd/system/nginx.service <<EOF
+    cat >"${NGINX_SERVICE_PATH}" <<EOF
+# Managed by Xray-script
 [Unit]
 Description=The NGINX HTTP and reverse proxy server
 After=syslog.target network-online.target remote-fs.target nss-lookup.target
@@ -714,8 +776,8 @@ ExecStartPre=/bin/sh -c 'rm -f /run/xray-script/nginx/*.sock'
 ExecStartPre=/bin/rm -rf /dev/shm/nginx
 ExecStartPre=/bin/mkdir /dev/shm/nginx
 ExecStartPre=/bin/chmod 711 /dev/shm/nginx
-ExecStartPre=/bin/mkdir /dev/shm/nginx/tcmalloc
-ExecStartPre=/bin/chmod 0777 /dev/shm/nginx/tcmalloc
+ExecStartPre=/usr/bin/install -d -m 0770 -o root -g xray /dev/shm/nginx/tcmalloc
+ExecStartPre=/bin/rm -f /run/nginx.pid
 # 测试配置文件
 ExecStartPre=/usr/sbin/nginx -t -q -g 'daemon on; master_process on;'
 # 启动 Nginx
@@ -817,15 +879,17 @@ function main() {
     # 根据解析出的 action 执行相应的操作
     case "${action}" in
     install)
+        ensure_nginx_runtime_user
         compile_dependencies   # 安装依赖
         source_install         # 编译并安装
         systemctl_config_nginx # 配置 systemd 服务
         ;;
     update)
-        compile_dependencies # 安装/更新依赖 (如果需要)
-        source_update        # 检查并更新
+        ensure_nginx_runtime_user
+        source_update        # 检查、按需安装依赖并更新
         ;;
     service)
+        ensure_nginx_runtime_user
         systemctl_config_nginx
         ;;
     purge)

@@ -137,7 +137,10 @@ function _os_full() {
 # =============================================================================
 function _os_ver() {
     # 调用 _os_full 函数获取完整版本信息，然后提取其中的数字和点
-    local main_ver="$(echo $(_os_full) | grep -oE "[0-9.]+")"
+    local os_full=''
+    local main_ver=''
+    os_full="$(_os_full)" || return 1
+    main_ver="$(printf '%s\n' "${os_full}" | grep -oE '[0-9.]+' | head -n 1)" || true
     # 输出主版本号 (第一个点号前的部分)
     printf -- "%s" "${main_ver%%.*}"
 }
@@ -387,19 +390,23 @@ function install_dependencies() {
 function download_github_files() {
     local target_dir="$1"     # 本地目标目录
     local github_api_url="$2" # GitHub API 项目 URL
+    local archive="${target_dir}/.xray-script-download.$$.tar.gz"
 
     # 创建目标目录
-    mkdir -p "${target_dir}"
+    mkdir -p "${target_dir}" || _error "${I18N_DATA['failed']}: ${target_dir}"
     # 切换到目标目录
-    cd "${target_dir}"
+    cd "${target_dir}" || _error "${I18N_DATA['failed']}: ${target_dir}"
 
     # 打印开始下载的信息
     echo -e "${GREEN}[${I18N_DATA['download']}]${NC} ${github_api_url}"
-    # 使用 curl 从 GitHub API 下载 tar.gz 格式的文件，并解压
-    if ! curl -sL "${github_api_url}" | tar xz --strip-components=1; then
+    # 先完成下载再解压，避免下载中断时把部分文件写入目标目录
+    if ! curl -fsSL --retry 5 --retry-delay 2 --max-time 120 "${github_api_url}" -o "${archive}" ||
+        ! tar xz --strip-components=1 -f "${archive}"; then
+        rm -f "${archive}"
         # 如果下载失败，则调用 _error 退出
         _error "${I18N_DATA['failed']}: ${github_api_url}"
     fi
+    rm -f "${archive}"
 }
 
 # =============================================================================
@@ -465,7 +472,7 @@ function check_xray_script_version() {
     # 读取本地版本号
     local local_version="$(jq -r '.version' "${SCRIPT_CONFIG_PATH}")"
     # 从 GitHub API 获取远程版本号
-    local remote_version="$(curl -fsSL "$script_config_github_url" | jq -r '.version // empty')"
+    local remote_version="$(curl -fsSL --retry 5 --retry-delay 2 --max-time 30 "$script_config_github_url" | jq -r '.version // empty')"
     [[ -n "${remote_version}" ]] || _error "${I18N_DATA['failed']}"
 
     if [[ "${local_version}" == "${remote_version}" ]]; then
@@ -482,7 +489,7 @@ function check_xray_script_version() {
 
     case "${is_update,,}" in
     y | yes)
-        cd "${HOME}"
+        cd "${HOME}" || _error "${I18N_DATA['failed']}: ${HOME}"
         update_xray_script_files "${remote_version}" || _error "${I18N_DATA['failed']}"
         if [[ "${UPDATE_ONLY}" -eq 0 ]]; then
             bash "${CUR_DIR}/${CUR_FILE}"
@@ -537,14 +544,23 @@ function main() {
         if ! check_dependencies; then
             install_dependencies
         fi
+        if ! check_dependencies; then
+            _error "${I18N_DATA['failed']}: dependencies"
+        fi
     fi
 
     # 检查脚本配置目录和配置文件是否存在，如果不存在则创建并下载默认配置
     if [[ ! -d "${SCRIPT_CONFIG_DIR}" ]]; then
-        mkdir -p "${SCRIPT_CONFIG_DIR}"
+        mkdir -p "${SCRIPT_CONFIG_DIR}" || _error "${I18N_DATA['failed']}: ${SCRIPT_CONFIG_DIR}"
     fi
     if [[ ! -f "${SCRIPT_CONFIG_PATH}" ]]; then
-        wget -O "${SCRIPT_CONFIG_PATH}" https://raw.githubusercontent.com/PoiSuKi/Xray-script/main/config.json
+        local temp_config="${SCRIPT_CONFIG_PATH}.tmp.$$"
+        if ! wget -q -O "${temp_config}" https://raw.githubusercontent.com/PoiSuKi/Xray-script/main/config.json ||
+            ! jq -e . "${temp_config}" >/dev/null 2>&1; then
+            rm -f "${temp_config}"
+            _error "${I18N_DATA['failed']}: config.json"
+        fi
+        mv -f "${temp_config}" "${SCRIPT_CONFIG_PATH}" || _error "${I18N_DATA['failed']}: config.json"
     fi
 
     # 处理命令行参数中的快速安装和自定义目录选项

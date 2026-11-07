@@ -206,20 +206,24 @@ function resolve_domain() {
 function dns_resolution() {
     local domain=$1 # 获取域名参数
 
-    # 获取当前服务器的公网 IPv4 和 IPv6 地址
-    local expected_ipv4="$(curl -fsSL ipv4.icanhazip.com)"
-    local expected_ipv6="$(curl -fsSL ipv6.icanhazip.com)"
+    # 分别获取当前服务器的公网 IPv4 和 IPv6 地址。
+    # IPv6 不可用时不能把空值当作正则表达式，否则会错误匹配任意地址。
+    local expected_ipv4="$(curl -4 -fsSL --max-time 10 https://ipv4.icanhazip.com 2>/dev/null | tr -d '[:space:]' || true)"
+    local expected_ipv6="$(curl -6 -fsSL --max-time 10 https://ipv6.icanhazip.com 2>/dev/null | tr -d '[:space:]' || true)"
 
     local resolved=0 # 初始化标志变量，表示是否匹配
 
     # 解析域名的 IPv4 和 IPv6 记录
-    local actual_ipv4="$(dig +short "${domain}")"
-    local actual_ipv6="$(dig +short AAAA "${domain}")"
+    local actual_ipv4="$(dig +short A "${domain}" 2>/dev/null || true)"
+    local actual_ipv6="$(dig +short AAAA "${domain}" 2>/dev/null || true)"
 
-    # 检查解析到的 IPv4 是否包含服务器的 IPv4
-    if [[ ${actual_ipv4} =~ ${expected_ipv4} ]]; then resolved=1; fi
-    # 检查解析到的 IPv6 是否包含服务器的 IPv6
-    if [[ ${actual_ipv6} =~ ${expected_ipv6} ]]; then resolved=1; fi
+    # 使用按行精确比较，避免 IP 中的点号被当作正则通配符。
+    if [[ -n "${expected_ipv4}" ]] && grep -Fxq -- "${expected_ipv4}" <<<"${actual_ipv4}"; then
+        resolved=1
+    fi
+    if [[ -n "${expected_ipv6}" ]] && grep -Fxq -- "${expected_ipv6}" <<<"${actual_ipv6}"; then
+        resolved=1
+    fi
 
     # 根据 resolved 标志返回结果
     [[ ${resolved} -eq 1 ]]
@@ -237,25 +241,55 @@ function dns_resolution() {
 function test_tcp_connection() {
     # 尝试打开到 host:port 的 TCP 连接，将输出重定向到 /dev/null
     # 成功则返回 0，失败（如连接被拒绝、超时）则返回非 0
-    echo >/dev/tcp/"$1"/"$2" 2>/dev/null
-    return $? # 返回上一条命令的退出码
+    if cmd_exists 'timeout'; then
+        timeout 10 bash -c 'echo >/dev/tcp/"$1"/"$2"' _ "$1" "$2" 2>/dev/null
+        return $?
+    fi
+    if echo >/dev/tcp/"$1"/"$2" 2>/dev/null; then
+        return 0
+    fi
+    return 1
 }
 
 # =============================================================================
 # 函数名称: get_listening_process_by_port
-# 功能描述: 获取指定端口的监听进程标识（优先 ss，回退 lsof）。
+# 功能描述: 获取指定 TCP/UDP 端口的监听进程标识（优先 ss，回退 lsof）。
 # =============================================================================
 function get_listening_process_by_port() {
     local port="$1"
+    local protocol="${2:-tcp}"
     local process=''
     if cmd_exists 'ss'; then
-        process="$(ss -lntp "( sport = :${port} )" 2>/dev/null | awk 'NR > 1 {print $NF; exit}')"
+        if [[ "${protocol}" == 'udp' ]]; then
+            process="$(ss -lnup "( sport = :${port} )" 2>/dev/null | awk 'NR > 1 {print $NF; exit}')"
+        else
+            process="$(ss -lntp "( sport = :${port} )" 2>/dev/null | awk 'NR > 1 {print $NF; exit}')"
+        fi
     fi
     if [[ -z "${process}" ]] && cmd_exists 'lsof'; then
-        process="$(lsof -nP -iTCP:${port} -sTCP:LISTEN 2>/dev/null | awk 'NR == 2 {print $1"/"$2; exit}')"
+        if [[ "${protocol}" == 'udp' ]]; then
+            process="$(lsof -nP -iUDP:${port} 2>/dev/null | awk 'NR == 2 {print $1"/"$2; exit}')"
+        else
+            process="$(lsof -nP -iTCP:${port} -sTCP:LISTEN 2>/dev/null | awk 'NR == 2 {print $1"/"$2; exit}')"
+        fi
     fi
     [[ "${process}" == '-' ]] && process=''
     echo "${process}"
+}
+
+function listener_is_script_managed() {
+    local listener_info="$1"
+    local pid=''
+    local executable=''
+
+    if [[ "${listener_info}" =~ pid=([0-9]+) ]]; then
+        pid="${BASH_REMATCH[1]}"
+    elif [[ "${listener_info}" =~ /([0-9]+)$ ]]; then
+        pid="${BASH_REMATCH[1]}"
+    fi
+    [[ -n "${pid}" && -r "/proc/${pid}/exe" ]] || return 1
+    executable="$(readlink -f "/proc/${pid}/exe" 2>/dev/null || true)"
+    [[ "${executable}" == '/usr/local/bin/xray' || "${executable}" == '/usr/local/nginx/sbin/nginx' ]]
 }
 
 # =============================================================================
@@ -263,17 +297,22 @@ function get_listening_process_by_port() {
 # 功能描述: 检查活动防火墙（ufw/firewalld）是否已放行指定 TCP 端口。
 # 返回值: 0 已放行, 1 未放行, 2 未检测到活动防火墙
 # =============================================================================
-function check_firewall_tcp_port_open() {
+function check_firewall_port_open() {
     local port="$1"
+    local protocol="${2:-tcp}"
     if cmd_exists 'ufw' && ufw status 2>/dev/null | grep -q '^Status: active'; then
-        ufw status 2>/dev/null | grep -Eiq "^${port}(/tcp)?[[:space:]]+ALLOW"
+        ufw status 2>/dev/null | grep -Eiq "^${port}(/${protocol})?[[:space:]]+ALLOW"
         return $?
     fi
     if cmd_exists 'firewall-cmd' && cmd_exists 'systemctl' && systemctl -q is-active firewalld; then
-        firewall-cmd --quiet --query-port="${port}/tcp"
+        firewall-cmd --quiet --query-port="${port}/${protocol}"
         return $?
     fi
     return 2
+}
+
+function check_firewall_tcp_port_open() {
+    check_firewall_port_open "$1" 'tcp'
 }
 
 # 检测当前已激活的防火墙名称（空格分隔）
@@ -289,15 +328,16 @@ function detect_active_firewalls() {
 }
 
 # 尝试放行指定 TCP 端口
-function allow_firewall_tcp_port() {
+function allow_firewall_port() {
     local firewall="$1"
     local port="$2"
+    local protocol="${3:-tcp}"
     case "${firewall}" in
     ufw)
-        ufw allow "${port}/tcp" >/dev/null 2>&1
+        ufw allow "${port}/${protocol}" >/dev/null 2>&1
         ;;
     firewalld)
-        firewall-cmd --quiet --permanent --add-port="${port}/tcp" && firewall-cmd --quiet --reload
+        firewall-cmd --quiet --permanent --add-port="${port}/${protocol}" && firewall-cmd --quiet --reload
         ;;
     *)
         return 1
@@ -305,51 +345,60 @@ function allow_firewall_tcp_port() {
     esac
 }
 
+function allow_firewall_tcp_port() {
+    allow_firewall_port "$1" "$2" 'tcp'
+}
+
 # =============================================================================
 # 函数名称: ensure_firewall_tcp_port_open
 # 功能描述: 确保指定端口在活动防火墙中放行；若未放行则自动尝试放行。
 # =============================================================================
-function ensure_firewall_tcp_port_open() {
+function ensure_firewall_port_open() {
     local port="$1"
+    local protocol="${2:-tcp}"
     local firewall_check_rc=0
     local active_firewalls_raw=''
     local -a active_firewalls=()
     local firewall=''
     local allow_failed=0
 
-    _test "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.sni_ports.open_check")${port}"
-    check_firewall_tcp_port_open "${port}"
+    _test "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.sni_ports.open_check")${port}/${protocol}"
+    check_firewall_port_open "${port}" "${protocol}"
     firewall_check_rc=$?
     if [[ ${firewall_check_rc} -eq 0 ]]; then
-        _pass "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.sni_ports.open_pass")${port}"
+        _pass "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.sni_ports.open_pass")${port}/${protocol}"
         return 0
     fi
 
     active_firewalls_raw="$(detect_active_firewalls)"
     if [[ -z "${active_firewalls_raw}" ]]; then
-        _info "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.sni_ports.open_skip")${port}"
+        _info "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.sni_ports.open_skip")${port}/${protocol}"
         return 0
     fi
     read -r -a active_firewalls <<<"${active_firewalls_raw}"
 
     _info "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.sni_ports.firewall_active")${active_firewalls_raw}"
-    _test "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.sni_ports.allow_try")${port}"
+    _test "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.sni_ports.allow_try")${port}/${protocol}"
     for firewall in "${active_firewalls[@]}"; do
-        if ! allow_firewall_tcp_port "${firewall}" "${port}"; then
+        if ! allow_firewall_port "${firewall}" "${port}" "${protocol}"; then
             allow_failed=1
         fi
     done
 
-    check_firewall_tcp_port_open "${port}"
+    check_firewall_port_open "${port}" "${protocol}"
     firewall_check_rc=$?
     if [[ ${allow_failed} -eq 0 && ${firewall_check_rc} -eq 0 ]]; then
-        _pass "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.sni_ports.allow_pass")${port}"
+        _pass "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.sni_ports.allow_pass")${port}/${protocol}"
         return 0
     fi
 
-    _fail "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.sni_ports.allow_fail")${port}"
-    _info "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.sni_ports.manual_allow")${port}"
+    _fail "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.sni_ports.allow_fail")${port}/${protocol}"
+    _info "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.sni_ports.manual_allow")${port}/${protocol}"
     return 1
+}
+
+function ensure_firewall_tcp_port_open() {
+    ensure_firewall_port_open "$1" 'tcp'
 }
 
 # =============================================================================
@@ -357,22 +406,29 @@ function ensure_firewall_tcp_port_open() {
 # 功能描述: SNI 初始化前检查 80/443 端口是否被占用并确保防火墙放行。
 # =============================================================================
 function check_sni_ports() {
-    local -a required_ports=(80 443)
+    local -a required_ports=('80 tcp' '443 tcp' '443 udp')
     local port=''
+    local protocol=''
+    local port_spec=''
     local occupied_by=''
 
     _info "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.sni_ports.start")"
 
-    for port in "${required_ports[@]}"; do
-        _test "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.sni_ports.occupied_check")${port}"
-        occupied_by="$(get_listening_process_by_port "${port}")"
-        if [[ -n "${occupied_by}" ]]; then
-            _fail "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.sni_ports.occupied_fail")${port} (${occupied_by})"
+    for port_spec in "${required_ports[@]}"; do
+        read -r port protocol <<<"${port_spec}"
+        _test "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.sni_ports.occupied_check")${port}/${protocol}"
+        occupied_by="$(get_listening_process_by_port "${port}" "${protocol}")"
+        if [[ -n "${occupied_by}" ]] && ! listener_is_script_managed "${occupied_by}"; then
+            _fail "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.sni_ports.occupied_fail")${port}/${protocol} (${occupied_by})"
             return 1
         fi
-        _pass "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.sni_ports.occupied_pass")${port}"
+        if [[ -z "${occupied_by}" ]]; then
+            _pass "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.sni_ports.occupied_pass")${port}/${protocol}"
+        else
+            _pass "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.sni_ports.occupied_managed")${port}/${protocol} (${occupied_by})"
+        fi
 
-        if ! ensure_firewall_tcp_port_open "${port}"; then
+        if ! ensure_firewall_port_open "${port}" "${protocol}"; then
             return 1
         fi
     done
@@ -393,7 +449,11 @@ function get_tls_info() {
     # 向域名的 443 端口发起 TLS 1.3 连接请求，并指定 ALPN 为 h2
     # 使用 echo QUIT 发送退出命令，stdbuf -oL 确保输出行缓冲
     # 2>&1 将错误输出合并到标准输出，tr -d '\0' 过滤掉空字节
-    echo QUIT | stdbuf -oL openssl s_client -connect "${1}:443" -tls1_3 -alpn h2 2>&1 | tr -d '\0'
+    if cmd_exists 'timeout'; then
+        echo QUIT | timeout 15 stdbuf -oL openssl s_client -connect "${1}:443" -tls1_3 -alpn h2 2>&1 | tr -d '\0'
+    else
+        echo QUIT | stdbuf -oL openssl s_client -connect "${1}:443" -tls1_3 -alpn h2 2>&1 | tr -d '\0'
+    fi
 }
 
 # =============================================================================
@@ -504,7 +564,7 @@ function check_password() {
     fi
 
     # 检查密码中是否包含空格
-    if [[ "${password}" =~ *\ * ]]; then
+    if [[ "${password}" == *[[:space:]]* ]]; then
         _fail "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.password.space_error")$password"
         return 1
     fi
@@ -540,7 +600,7 @@ function check_path() {
     fi
 
     # 检查路径中是否包含空格
-    if [[ "${path}" =~ *\ * ]]; then
+    if [[ "${path}" == *[[:space:]]* ]]; then
         _fail "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.path.space_error")$path"
         return 1
     fi
@@ -646,6 +706,16 @@ function check_domain_security() {
     _test "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.tcp.connect_check"): ${domain}:443"
     if ! test_tcp_connection "$domain" 443; then
         _fail "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.tcp.connect_fail" | sed "s/\${domain}/${domain}/")"
+        return 1
+    fi
+
+    # REALITY 目标不应把主域名用于跳转；这里只拦截明确的 HTTP 重定向。
+    local http_probe=''
+    local http_code=''
+    http_probe="$(curl -sS -o /dev/null -w '%{http_code}\t%{redirect_url}' --max-time 10 "https://${domain}/" 2>/dev/null || true)"
+    http_code="${http_probe%%$'\t'*}"
+    if [[ "${http_code}" =~ ^3[0-9]{2}$ ]]; then
+        _fail "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.tls.redirect_error")${domain}"
         return 1
     fi
 
@@ -755,7 +825,7 @@ function check_xray_version_exists() {
     local version_url="https://github.com/XTLS/Xray-core/releases/tag/v${version#*v}"
 
     # 使用 curl 获取页面的 HTTP 状态码
-    local status_code=$(curl -L -o /dev/null -s -w '%{http_code}\n' "$version_url")
+    local status_code=$(curl -L --max-time 15 -o /dev/null -s -w '%{http_code}\n' "$version_url")
 
     # 检查状态码是否为 200 (OK)
     if [[ "$status_code" == "200" ]]; then

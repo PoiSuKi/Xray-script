@@ -13,7 +13,8 @@
   },
   "main": {
     "not_support": "当前脚本配置类型不是 SNI ，无法使用该功能",
-    "handler_failed": "操作执行失败，已安全退出以避免污染配置或环境"
+    "handler_failed": "操作执行失败，已安全退出以避免污染配置或环境",
+    "read_failed": "输入已结束，操作已取消"
   },
   "menu": {
     "choose": "请选择操作",
@@ -103,7 +104,7 @@
       "info2": "管理屏蔽或 WARP 分流",
       "info3": "包含 Nginx 更新，修改域名，修改 Web 配置等",
       "info4": "(非 SNI 配置) 修改 Xray 监听端口，并自动重启服务",
-      "info5": "geodata 由 https://github.com/Loyalsoldier/v2ray-rules-dat  提供",
+      "info5": "geodata 由 Xray 官方 update-geodata 流程更新",
       "info6": "仅修改 REALITY 的 target 与 ServerName，其余配置保持不变"
     },
     "route_management": {
@@ -157,7 +158,7 @@
     },
     "xray": {
       "config_update": "正在更新 Xray 配置",
-      "min_version": "XHTTP/Fallback/SNI 配置要求 Xray v24.12.15 或更高版本，当前为 ${version}"
+      "min_version": "XHTTP/Trojan/Fallback/SNI 配置要求 Xray v25.3.6 或更高版本，当前为 ${version}"
     },
     "reality": {
       "read_failed": "读取当前 Xray 配置失败",
@@ -262,15 +263,16 @@
       "occupied_check": "正在检查端口是否被占用：",
       "occupied_fail": "端口已被占用，无法继续 SNI 配置：",
       "occupied_pass": "端口未被占用：",
-      "open_check": "正在检查防火墙是否放行 TCP 端口：",
-      "open_pass": "防火墙已放行 TCP 端口：",
-      "open_fail": "防火墙未放行 TCP 端口：",
+      "occupied_managed": "端口由脚本管理的 Xray/Nginx 占用，允许继续：",
+      "open_check": "正在检查防火墙是否放行端口：",
+      "open_pass": "防火墙已放行端口：",
+      "open_fail": "防火墙未放行端口：",
       "open_skip": "未检测到活动防火墙策略，默认视为放行：",
       "firewall_active": "检测到活动防火墙：",
-      "allow_try": "正在尝试自动放行 TCP 端口：",
-      "allow_pass": "已自动放行 TCP 端口：",
-      "allow_fail": "自动放行 TCP 端口失败：",
-      "manual_allow": "请手动放行 TCP 端口后重试（示例：ufw allow <端口>/tcp 或 firewall-cmd --permanent --add-port=<端口>/tcp && firewall-cmd --reload）：",
+      "allow_try": "正在尝试自动放行端口：",
+      "allow_pass": "已自动放行端口：",
+      "allow_fail": "自动放行端口失败：",
+      "manual_allow": "请手动放行端口后重试（示例：ufw allow <端口>/<协议> 或 firewall-cmd --permanent --add-port=<端口>/<协议> && firewall-cmd --reload）：",
       "all_pass": "SNI 必需端口检查通过"
     },
     "uuid": {
@@ -323,7 +325,8 @@
       "alpn_error": "目标域名未成功协商 ALPN h2",
       "alpn_pass": "ALPN h2 协商通过",
       "key_exchange_warn": "未使用 X25519 密钥交换：",
-      "key_exchange_pass": "使用 X25519 密钥交换"
+      "key_exchange_pass": "使用 X25519 密钥交换",
+      "redirect_error": "目标域名发生 HTTP 重定向，请使用最终直连域名："
     },
     "dns": {
       "check_start": "正在检查域名解析是否指向本机：",
@@ -510,6 +513,7 @@
       "read_current_versions": "读取 Nginx 和 OpenSSL 的当前版本。",
       "check_update": "判断是否需要更新。",
       "start_update": "更新 Nginx。",
+      "up_to_date": "Nginx 和 OpenSSL 均已是最新版本。",
       "smooth_upgrade": "正在平滑升级 Nginx...",
       "no_old_process": "未找到旧的 Nginx 进程。跳过后续步骤。"
     },

@@ -63,6 +63,7 @@
 7. v2026.11.05-r7 版本修复自定义 UUID 输入被 shell 拆分的问题，并在终端客户端配置中显示 `SupportX25519MLKEM768`。
 8. v2026.11.07 版本重构 SNI 运行时 Socket 目录，使 Nginx 与 Xray 专用用户权限和启停生命周期隔离；同时增加 XHTTP/TLS `stream-one`、H2 ALPN 校验、最低 Xray 版本检查和 SNI 域名修改保护。升级后请重新应用一次 SNI 配置以迁移 Socket 路径。
 9. v2026.11.07-r1 版本将已测试系统更新为 Debian 11、12、13，并调整其他系统的兼容性说明。
+10. v2026.11.08 版本按实际版本同步官方 Xray 安装器，增加 Xray 配置事务回滚、Nginx 非 root worker 与二进制/模块原子更新、DNS 分族校验、TCP 超时和 HTTP 重定向检测；XHTTP+Cloudflare 普通 TLS 链接改用兼容性更好的 `packet-up`，上下行分离链接按官方要求使用 `stream-up`。
 
 ## 分享链接
 

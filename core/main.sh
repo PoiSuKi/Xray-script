@@ -179,8 +179,8 @@ function processes_web_config() {
         if [[ "${current_tag,,}" != 'sni' ]]; then
             exec_handler '--sni-ports'
         fi
+        exec_handler '--install' 'release'    # 先准备满足最低版本的 Xray
         exec_handler '--script-config' 'SNI'  # 设置脚本配置为 SNI
-        exec_handler '--install'              # 安装核心组件
         exec_handler '--nginx-install'        # 安装 Nginx
         exec_handler '--xray-config' "${web}" # 配置 Xray 使用选定的 web 类型
         exec_handler '--restart'              # 重启 Xray 服务
@@ -243,8 +243,9 @@ function processes_xray_config() {
         processes_web_config 'n'
     else
         # 对于其他配置类型
+        exec_handler '--check-version' "${XTLS_CONFIG}" # 安装前校验协议最低版本
+        exec_handler '--install'                        # 按脚本配置安装核心组件
         exec_handler '--script-config' "${XTLS_CONFIG}" # 设置脚本配置
-        exec_handler '--install'                        # 安装核心组件
         exec_handler '--xray-config'                    # 配置 Xray
         exec_handler '--restart'                        # 重启 Xray 服务
         exec_handler '--share'                          # 显示分享链接
