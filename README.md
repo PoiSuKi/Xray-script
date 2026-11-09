@@ -67,6 +67,7 @@
 10. v2026.11.08 版本按实际版本同步官方 Xray 安装器，增加 Xray 配置事务回滚、Nginx 非 root worker 与二进制/模块原子更新、DNS 分族校验、TCP 超时和 HTTP 重定向检测；XHTTP+Cloudflare 普通 TLS 链接改用兼容性更好的 `packet-up`，上下行分离链接按官方要求使用 `stream-up`。
 11. v2026.11.08-r1 版本修复 UUID 生成与校验、上传/更新失败回滚、mKCP FinalMask、XHTTP 路径边界和 REALITY 日志权限问题；限制 Cloudreve 管理端口仅本机访问，并加强 ACME、Docker 安装脚本与 Cloudreve 更新的失败保护。
 12. v2026.11.09 版本新增 CDN-XHTTP 安装模式：Nginx 终止 TLS、提供静态伪装站，并通过 Unix Socket 将秘密路径转发至 Xray XHTTP `packet-up`；证书使用 acme.sh HTTP-01 webroot 签发，不依赖 Cloudflare API Token，同时完善切换模式和卸载清理。
+13. v2026.11.09-r1 版本修复全新系统缺少 `/var/www` 父目录时，CDN-XHTTP 伪装站点复制失败的问题。
 
 ## 分享链接
 

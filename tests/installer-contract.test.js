@@ -470,6 +470,7 @@ test("CDN-XHTTP installation and purge are transactional", () => {
   const handler = read("core/handler.sh");
   const install = functionBody(handler, "handler_cdn_xhttp_install");
   const purge = functionBody(handler, "handler_purge");
+  const webRoot = functionBody(handler, "prepare_cdn_xhttp_web_root");
 
   assert.match(handler, /--cdn-xhttp-install/);
   assert.match(handler, /--cdn-xhttp-ports/);
@@ -480,6 +481,7 @@ test("CDN-XHTTP installation and purge are transactional", () => {
   assert.match(install, /nginx -t/);
   assert.match(install, /if ! handler_nginx_restart; then/);
   assert.match(install, /commit_script_config_transaction/);
+  assert.match(webRoot, /install -d -m 0755 "\$\(dirname -- "\$\{CDN_XHTTP_WEB_ROOT\}"\)"/);
   assert.match(purge, /handler_nginx_stop/);
   assert.match(purge, /remove_cdn_xhttp_files/);
   assert.match(handler, /modules-enabled\/stream\.conf/);

@@ -2645,6 +2645,7 @@ function restore_cdn_xhttp_nginx_configs() {
 function prepare_cdn_xhttp_web_root() {
     local created=0
 
+    install -d -m 0755 "$(dirname -- "${CDN_XHTTP_WEB_ROOT}")" || return 1
     if [[ ! -e "${CDN_XHTTP_WEB_ROOT}" ]]; then
         cp -a "${CDN_XHTTP_WEB_SOURCE}" "${CDN_XHTTP_WEB_ROOT}" || return 1
         created=1

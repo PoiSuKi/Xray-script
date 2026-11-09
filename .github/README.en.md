@@ -68,6 +68,7 @@
 10. v2026.11.08 synchronizes the official Xray installer with the installed version, adds transactional Xray config rollback, an unprivileged Nginx worker with atomic binary/module updates, DNS family checks, TCP timeouts, and HTTP redirect detection. Regular XHTTP TLS links through Cloudflare now use the more compatible `packet-up` mode, while split up/down links use `stream-up` as required by the official behavior.
 11. v2026.11.08-r1 fixes UUID generation and validation, installer/update rollback, mKCP FinalMask, XHTTP path boundaries, and REALITY log ownership; restricts the Cloudreve management port to localhost and hardens the ACME, Docker installer, and Cloudreve update failure paths.
 12. v2026.11.09 adds CDN-XHTTP: Nginx terminates TLS, serves a static decoy site, and forwards the secret path to Xray XHTTP `packet-up` over a Unix socket. acme.sh HTTP-01 webroot issuance replaces the Cloudflare API Token dependency, and mode switching plus uninstall cleanup are included.
+13. v2026.11.09-r1 fixes CDN-XHTTP decoy-site installation on fresh systems where the `/var/www` parent directory does not yet exist.
 
 ## Share Links
 
