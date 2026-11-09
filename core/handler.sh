@@ -54,6 +54,15 @@ readonly NGINX_CONFIG_DIR="/usr/local/nginx/conf" # Nginx 配置目录 (目标�
 readonly MANAGED_NGINX_BINARY="/usr/local/nginx/sbin/nginx"
 readonly XRAY_RUNTIME_DIR="/run/xray-script/xray"
 readonly NGINX_RUNTIME_DIR="/run/xray-script/nginx"
+readonly CDN_XHTTP_SOCKET="${XRAY_RUNTIME_DIR}/cdn_xhttp.sock"
+readonly CDN_XHTTP_WEB_ROOT="/var/www/xray-cdn"
+readonly CDN_XHTTP_SITE_DIR="${NGINX_CONFIG_DIR}/sites-available"
+readonly CDN_XHTTP_SITE_TEMPLATE="${CONFIG_DIR}/nginx/cdn-xhttp/site.conf.template"
+readonly CDN_XHTTP_DEFAULT_TEMPLATE="${CONFIG_DIR}/nginx/cdn-xhttp/https-default.conf.template"
+readonly CDN_XHTTP_WEB_SOURCE="${CONFIG_DIR}/nginx/cdn-xhttp/web"
+readonly CDN_XHTTP_DEFAULT_CONFIG="${NGINX_CONFIG_DIR}/conf.d/cdn-xhttp-default.conf"
+readonly CDN_XHTTP_XRAY_TRANSACTION_BACKUP="${XRAY_CONFIG_PATH}.cdn-xhttp-transaction.bak"
+readonly CDN_XHTTP_XRAY_TRANSACTION_ABSENT="${XRAY_CONFIG_PATH}.cdn-xhttp-transaction.absent"
 readonly RUNTIME_TMPFILES_SOURCE="${CONFIG_DIR}/systemd/xray-script-runtime.conf"
 readonly RUNTIME_TMPFILES_DEST="/etc/tmpfiles.d/xray-script-runtime.conf"
 # 定义项目内子脚本的路径
@@ -929,7 +938,9 @@ function handler_ca_server() {
 
     SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --arg caServer "${target_ca_server,,}" '.nginx.ca_server = $caServer')"
     echo "${SCRIPT_CONFIG}" >"${SCRIPT_CONFIG_PATH}" && sleep 2
-    exec_ssl '--set-ca' "--ca=${target_ca_server}" || _error "failed to set acme default ca"
+    if [[ -x "${ACME_PATH}" ]]; then
+        exec_ssl '--set-ca' "--ca=${target_ca_server}" || _error "failed to set acme default ca"
+    fi
     handler_update_ocsp_config "${target_ca_server}" 'y'
 }
 
@@ -987,7 +998,7 @@ function handler_check_protocol_version() {
     local requested_version="$(echo "${SCRIPT_CONFIG}" | jq -r '.xray.version // empty')"
 
     case "${config_tag,,}" in
-    xhttp | trojan | fallback | sni)
+    xhttp | trojan | fallback | sni | cdnxhttp)
         if [[ -n "${requested_version}" ]] && ! version_ge "${requested_version}" 'v25.3.6'; then
             _error "$(echo "$I18N_DATA" | jq -r --arg version "${requested_version}" '.handler.xray.min_version | sub("\\$\\{version\\}"; $version)')"
         fi
@@ -1031,7 +1042,7 @@ function handler_script_config() {
 
     # 只读取当前协议真正需要的字段，避免无关生成器失败阻断安装。
     case "${CONFIG_TAG,,}" in
-    mkcp | vision | xhttp | fallback | sni)
+    mkcp | vision | xhttp | fallback | sni | cdnxhttp)
         XRAY_UUID="$(exec_generate '--uuid' "${CONFIG_DATA['uuid']}")" || return 1
         ;;
     esac
@@ -1057,7 +1068,7 @@ function handler_script_config() {
         ;;
     esac
     case "${CONFIG_TAG,,}" in
-    xhttp | trojan | fallback | sni)
+    xhttp | trojan | fallback | sni | cdnxhttp)
         if [[ -n "${CONFIG_DATA['path']}" ]]; then
             XHTTP_PATH="${CONFIG_DATA['path']}"
         else
@@ -1097,7 +1108,7 @@ function handler_script_config() {
         # 更新 Trojan 密码
         SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --arg password "${TROJAN_PASSWORD}" '.xray.trojan = $password')" || return 1
         ;;
-    mkcp | vision | xhttp | fallback | sni)
+    mkcp | vision | xhttp | fallback | sni | cdnxhttp)
         # 更新 UUID
         SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --arg uuid "${XRAY_UUID}" '.xray.uuid = $uuid')" || return 1
         ;;
@@ -1123,10 +1134,16 @@ function handler_script_config() {
         SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --arg domain "${TARGET_DOMAIN}" '.nginx.domain = $domain')" || return 1
         SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --arg cdn "${CDN_DOMAIN}" '.nginx.cdn = $cdn')" || return 1
         ;;
+    cdnxhttp)
+        if [[ -n "${CA_EMAIL}" ]]; then
+            SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --arg ca "${CA_EMAIL}" '.nginx.ca = $ca')" || return 1
+        fi
+        SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --arg domain "${CDN_DOMAIN}" '.nginx.domain = $domain | .nginx.deployment = "cdn-xhttp" | .nginx.web_root = "/var/www/xray-cdn"')" || return 1
+        ;;
     esac
     # 根据配置标签更新特定字段 (第三部分)
     case "${CONFIG_TAG,,}" in
-    xhttp | trojan | fallback | sni)
+    xhttp | trojan | fallback | sni | cdnxhttp)
         # 更新路径
         SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --arg path "${XHTTP_PATH}" '.xray.path = $path')" || return 1
         ;;
@@ -1220,7 +1237,7 @@ function handler_xray_config() {
     local WARP_STATUS="$(echo "${SCRIPT_CONFIG}" | jq -r '.xray.warp')"              # 获取 WARP 状态
     # 在安装完成后校验实际运行版本，避免全新机器在上游安装器执行前被误判为版本过低。
     case "${CONFIG_TAG,,}" in
-    xhttp | trojan | fallback | sni)
+    xhttp | trojan | fallback | sni | cdnxhttp)
         local installed_version=''
         installed_version="$(xray -version 2>/dev/null | awk 'NR == 1 {print $2}')"
         if [[ -z "${installed_version}" ]] || ! version_ge "${installed_version}" 'v25.3.6'; then
@@ -1252,13 +1269,13 @@ function handler_xray_config() {
     }
     # 安装配置默认关闭流量探测，避免覆盖入站目标地址
     XRAY_CONFIG="$(echo "${XRAY_CONFIG}" | jq '(.inbounds[] | select(.sniffing != null) | .sniffing.enabled) = false')"
-    # 如果配置标签不是 sni，则更新端口
-    if [[ "${CONFIG_TAG,,}" != 'sni' ]]; then
+    # SNI 与 CDN-XHTTP 使用 Unix Socket 入口，不修改公网端口字段。
+    if [[ "${CONFIG_TAG,,}" != 'sni' && "${CONFIG_TAG,,}" != 'cdnxhttp' ]]; then
         XRAY_CONFIG="$(echo "${XRAY_CONFIG}" | jq --argjson port "${XRAY_PORT}" '.inbounds[1].port = $port')"
     fi
     # 根据配置标签更新特定字段 (第一部分)
     case "${CONFIG_TAG,,}" in
-    mkcp | vision | xhttp | fallback | sni)
+    mkcp | vision | xhttp | fallback | sni | cdnxhttp)
         # 更新客户端 UUID
         XRAY_CONFIG="$(echo "${XRAY_CONFIG}" | jq --arg uuid "${XRAY_UUID}" '.inbounds[1].settings.clients[0].id = $uuid')"
         ;;
@@ -1287,7 +1304,7 @@ function handler_xray_config() {
     esac
     # 根据配置标签更新特定字段 (第三部分)
     case "${CONFIG_TAG,,}" in
-    xhttp | trojan)
+    xhttp | trojan | cdnxhttp)
         # 更新 XHTTP 路径
         XRAY_CONFIG="$(echo "${XRAY_CONFIG}" | jq --arg path "${XHTTP_PATH}" '.inbounds[1].streamSettings.xhttpSettings.path = $path')"
         ;;
@@ -1345,6 +1362,18 @@ function handler_xray_config() {
         rm -f "${xray_config_backup}"
         return 1
     fi
+    if [[ "${CONFIG_TAG,,}" == 'cdnxhttp' ]]; then
+        # Nginx 与证书应用成功后由 handler_cdn_xhttp_install 提交事务。
+        if [[ ! -f "${CDN_XHTTP_XRAY_TRANSACTION_BACKUP}" && ! -f "${CDN_XHTTP_XRAY_TRANSACTION_ABSENT}" ]]; then
+            if [[ -f "${xray_config_backup}" ]]; then
+                mv -f "${xray_config_backup}" "${CDN_XHTTP_XRAY_TRANSACTION_BACKUP}" || return 1
+            else
+                : >"${CDN_XHTTP_XRAY_TRANSACTION_ABSENT}" || return 1
+            fi
+        fi
+        rm -f "${xray_config_backup}"
+        return 0
+    fi
     commit_script_config_transaction
     rm -f "${xray_config_backup}"
 }
@@ -1378,12 +1407,16 @@ function handler_read_xray_config() {
         exec_read 'block-cn'
         exec_read 'block-ad'
     fi
-    # 读取端口
-    exec_read 'port'
+    # CDN-XHTTP 对外固定由 Nginx 监听 443，Xray 本身只使用 Unix Socket。
+    if [[ "${CONFIG_TAG,,}" != 'cdnxhttp' ]]; then
+        exec_read 'port'
+    else
+        CONFIG_DATA['port']='443'
+    fi
     # 根据配置标签读取特定参数 (第一部分)
     case "${CONFIG_TAG,,}" in
-    trojan) exec_read 'password' ;;                             # 读取 Trojan 密码
-    mkcp | vision | xhttp | fallback | sni) exec_read 'uuid' ;; # 读取 UUID
+    trojan) exec_read 'password' ;;                                       # 读取 Trojan 密码
+    mkcp | vision | xhttp | fallback | sni | cdnxhttp) exec_read 'uuid' ;; # 读取 UUID
     esac
     # 根据配置标签读取特定参数 (第二部分)
     case "${CONFIG_TAG,,}" in
@@ -1401,6 +1434,11 @@ function handler_read_xray_config() {
         exec_read 'domain' # 读取域名
         exec_read 'cdn'    # 读取 CDN
         ;;
+    cdnxhttp)
+        local CA_EMAIL="$(echo "${SCRIPT_CONFIG}" | jq -r '.nginx.ca')"
+        [[ -z "${CA_EMAIL}" || "${CA_EMAIL}" == 'null' ]] && exec_read 'email'
+        exec_read 'cdn'
+        ;;
     esac
     # 根据配置标签读取特定参数 (第四部分)
     case "${CONFIG_TAG,,}" in
@@ -1408,7 +1446,7 @@ function handler_read_xray_config() {
     esac
     # 根据配置标签读取特定参数 (第五部分)
     case "${CONFIG_TAG,,}" in
-    xhttp | trojan | fallback | sni) exec_read 'path' ;; # 读取路径
+    xhttp | trojan | fallback | sni | cdnxhttp) exec_read 'path' ;; # 读取路径
     esac
 }
 
@@ -1424,7 +1462,12 @@ function handler_read_xray_config() {
 function handler_sni_config() {
     # 从脚本配置中读取当前配置标签
     local CONFIG_TAG="$(echo "${SCRIPT_CONFIG}" | jq -r '.xray.tag')"
+    local NGINX_DEPLOYMENT="$(echo "${SCRIPT_CONFIG}" | jq -r '.nginx.deployment // empty')"
     local web="${1}" # 获取 Web 服务类型参数
+    if [[ "${NGINX_DEPLOYMENT,,}" == 'cdn-xhttp' ]]; then
+        handler_nginx_stop || return 1
+        remove_cdn_xhttp_files || return 1
+    fi
     # 根据当前配置标签执行不同操作
     case "${CONFIG_TAG,,}" in
     mkcp | vision | xhttp | trojan | fallback)
@@ -1737,6 +1780,10 @@ function handler_change_xray_port() {
     # 获取配置标签
     local CONFIG_TAG="$(echo "${SCRIPT_CONFIG}" | jq -r '.xray.tag')"
 
+    if [[ "${CONFIG_TAG,,}" == 'cdnxhttp' ]]; then
+        _error "$(echo "$I18N_DATA" | jq -r '.handler.cdn_xhttp.port_fixed')"
+    fi
+
     # 读取端口
     exec_read 'port'
 
@@ -2015,11 +2062,78 @@ function handler_install() {
 # 参数: 无
 # 返回值: 无 (通过调用外部脚本执行卸载)
 # =============================================================================
+function cdn_xhttp_mode_active() {
+    local tag="$(echo "${SCRIPT_CONFIG}" | jq -r '.xray.tag // empty')"
+    local deployment="$(echo "${SCRIPT_CONFIG}" | jq -r '.nginx.deployment // empty')"
+    [[ "${tag,,}" == 'cdnxhttp' || "${deployment,,}" == 'cdn-xhttp' ]]
+}
+
+function remove_cdn_xhttp_files() {
+    local domain="$(echo "${SCRIPT_CONFIG}" | jq -r '.nginx.domain // empty')"
+    local site_name=''
+    local cert_dir=''
+
+    if [[ -n "${domain}" && "${domain}" =~ ^[a-zA-Z0-9]([-a-zA-Z0-9.]*[a-zA-Z0-9])?$ ]]; then
+        site_name="cdn-xhttp-${domain}.conf"
+        cert_dir="${NGINX_CONFIG_DIR}/certs/${domain}"
+        rm -f "${CDN_XHTTP_SITE_DIR}/${site_name}" "${NGINX_CONFIG_DIR}/sites-enabled/${site_name}" || return 1
+        if [[ -x "${ACME_PATH}" ]]; then
+            exec_ssl '--stop-renew' "--domain=${domain}" >/dev/null 2>&1 || true
+        fi
+        case "${cert_dir}" in
+        "${NGINX_CONFIG_DIR}/certs/"*) rm -rf -- "${cert_dir}" || return 1 ;;
+        *) return 1 ;;
+        esac
+    fi
+
+    rm -f "${CDN_XHTTP_DEFAULT_CONFIG}" "${NGINX_CONFIG_DIR}/modules-enabled/stream.conf" || return 1
+    rm -f "${CDN_XHTTP_SOCKET}" "${CDN_XHTTP_XRAY_TRANSACTION_BACKUP}" "${CDN_XHTTP_XRAY_TRANSACTION_ABSENT}" || return 1
+    if [[ -f "${CDN_XHTTP_WEB_ROOT}/.xray-script-owned" && "${CDN_XHTTP_WEB_ROOT}" == '/var/www/xray-cdn' ]]; then
+        rm -rf -- "${CDN_XHTTP_WEB_ROOT}" || return 1
+    fi
+
+    SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq '
+        .nginx.deployment = "" |
+        .nginx.domain = "" |
+        .nginx.cdn = "" |
+        .nginx.web = "" |
+        .nginx.web_root = "" |
+        .nginx.custom_sites = []
+    ')" || return 1
+}
+
 function handler_purge() {
+    local installer=''
+    local cdn_xhttp_active=0
+    local nginx_was_active=0
+    local nginx_was_enabled=0
+
+    if cdn_xhttp_mode_active; then
+        cdn_xhttp_active=1
+        systemctl -q is-active nginx && nginx_was_active=1
+        systemctl -q is-enabled nginx && nginx_was_enabled=1
+        handler_nginx_stop || return 1
+    fi
+
     # 调用 Xray-install 脚本进行卸载 (带 --purge 参数)
-    local installer
-    installer="$(fetch_xray_installer)" || return 1
-    bash -s -- remove --purge <<<"${installer}" || return 1
+    installer="$(fetch_xray_installer)" || {
+        if [[ ${cdn_xhttp_active} -eq 1 ]]; then
+            restore_cdn_xhttp_service_state nginx "${nginx_was_active}" "${nginx_was_enabled}" || true
+        fi
+        return 1
+    }
+    if ! bash -s -- remove --purge <<<"${installer}"; then
+        if [[ ${cdn_xhttp_active} -eq 1 ]]; then
+            restore_cdn_xhttp_service_state nginx "${nginx_was_active}" "${nginx_was_enabled}" || true
+        fi
+        return 1
+    fi
+
+    if [[ ${cdn_xhttp_active} -eq 1 ]]; then
+        remove_cdn_xhttp_files || return 1
+        echo -e "${GREEN}[$(echo "$I18N_DATA" | jq -r '.title.info')]${NC} $(echo "$I18N_DATA" | jq -r '.handler.cdn_xhttp.purged')" >&2
+    fi
+
     # 重置 xray 字段
     SCRIPT_CONFIG="$(reset_json_fields "${SCRIPT_CONFIG}" 'xray')" || return 1
     # 将重置后的脚本配置写入文件
@@ -2449,6 +2563,258 @@ function handler_nginx_restart() {
     systemctl -q is-active nginx
 }
 
+function render_cdn_xhttp_nginx_configs() {
+    local domain="$1"
+    local path="$2"
+    local cert_dir="$3"
+    local site_path="$4"
+    local default_path="$5"
+    local ipv6_80='listen [::]:80;'
+    local ipv6_443='listen [::]:443 ssl;'
+
+    [[ -f "${CDN_XHTTP_SITE_TEMPLATE}" && -f "${CDN_XHTTP_DEFAULT_TEMPLATE}" ]] || return 1
+
+    cp -f "${CDN_XHTTP_SITE_TEMPLATE}" "${site_path}" || return 1
+    cp -f "${CDN_XHTTP_DEFAULT_TEMPLATE}" "${default_path}" || return 1
+
+    sed -i \
+        -e "s|__DOMAIN__|${domain}|g" \
+        -e "s|__WEB_ROOT__|${CDN_XHTTP_WEB_ROOT}|g" \
+        -e "s|__XHTTP_PATH__|${path}|g" \
+        -e "s|__CERT_DIR__|${cert_dir}|g" \
+        -e "s|__SOCKET_PATH__|${CDN_XHTTP_SOCKET}|g" \
+        -e "s|__IPV6_LISTEN_80__|${ipv6_80}|g" \
+        "${site_path}" || return 1
+    sed -i \
+        -e "s|__IPV6_LISTEN_443__|${ipv6_443}|g" \
+        "${default_path}" || return 1
+    sed -i \
+        -e "s|__DOMAIN__|${domain}|g" \
+        -e "s|__WEB_ROOT__|${CDN_XHTTP_WEB_ROOT}|g" \
+        -e "s|__XHTTP_PATH__|${path}|g" \
+        -e "s|__CERT_DIR__|${cert_dir}|g" \
+        -e "s|__SOCKET_PATH__|${CDN_XHTTP_SOCKET}|g" \
+        -e "s|__IPV6_LISTEN_443__|${ipv6_443}|g" \
+        "${site_path}" || return 1
+    chmod 0644 "${site_path}" "${default_path}" || return 1
+}
+
+function backup_cdn_xhttp_nginx_configs() {
+    local backup_dir="$1"
+    local site_path=''
+
+    mkdir -p "${backup_dir}/sites-enabled" || return 1
+    if [[ -f "${NGINX_CONFIG_DIR}/modules-enabled/stream.conf" ]]; then
+        mv -f "${NGINX_CONFIG_DIR}/modules-enabled/stream.conf" "${backup_dir}/stream.conf" || return 1
+    fi
+    if [[ -f "${CDN_XHTTP_DEFAULT_CONFIG}" ]]; then
+        mv -f "${CDN_XHTTP_DEFAULT_CONFIG}" "${backup_dir}/https-default.conf" || return 1
+    fi
+
+    for site_path in "${NGINX_CONFIG_DIR}"/sites-enabled/*; do
+        [[ -e "${site_path}" || -L "${site_path}" ]] || continue
+        if head -n 1 "${site_path}" 2>/dev/null | grep -Eq '^# (xray_script|Managed by Xray-script CDN-XHTTP mode)'; then
+            mv -f "${site_path}" "${backup_dir}/sites-enabled/$(basename "${site_path}")" || return 1
+        fi
+    done
+}
+
+function restore_cdn_xhttp_nginx_configs() {
+    local backup_dir="$1"
+    local enabled_path=''
+
+    rm -f "${CDN_XHTTP_DEFAULT_CONFIG}"
+    for enabled_path in "${NGINX_CONFIG_DIR}"/sites-enabled/*; do
+        [[ -e "${enabled_path}" || -L "${enabled_path}" ]] || continue
+        if head -n 1 "${enabled_path}" 2>/dev/null | grep -Eq '^# (xray_script|Managed by Xray-script CDN-XHTTP mode)'; then
+            rm -f "${enabled_path}"
+        fi
+    done
+    if [[ -f "${backup_dir}/stream.conf" ]]; then
+        mv -f "${backup_dir}/stream.conf" "${NGINX_CONFIG_DIR}/modules-enabled/stream.conf" || return 1
+    fi
+    if [[ -f "${backup_dir}/https-default.conf" ]]; then
+        mv -f "${backup_dir}/https-default.conf" "${CDN_XHTTP_DEFAULT_CONFIG}" || return 1
+    fi
+    for enabled_path in "${backup_dir}"/sites-enabled/*; do
+        [[ -e "${enabled_path}" || -L "${enabled_path}" ]] || continue
+        mv -f "${enabled_path}" "${NGINX_CONFIG_DIR}/sites-enabled/$(basename "${enabled_path}")" || return 1
+    done
+}
+
+function prepare_cdn_xhttp_web_root() {
+    local created=0
+
+    if [[ ! -e "${CDN_XHTTP_WEB_ROOT}" ]]; then
+        cp -a "${CDN_XHTTP_WEB_SOURCE}" "${CDN_XHTTP_WEB_ROOT}" || return 1
+        created=1
+    elif [[ -f "${CDN_XHTTP_WEB_ROOT}/.xray-script-owned" ]]; then
+        cp -a "${CDN_XHTTP_WEB_SOURCE}/." "${CDN_XHTTP_WEB_ROOT}/" || return 1
+    fi
+    chmod 0755 "${CDN_XHTTP_WEB_ROOT}" || return 1
+    echo "${created}"
+}
+
+function wait_cdn_xhttp_socket() {
+    local attempt=''
+
+    for attempt in $(seq 1 40); do
+        [[ -S "${CDN_XHTTP_SOCKET}" ]] && return 0
+        if ! systemctl -q is-active xray; then
+            return 1
+        fi
+        sleep 0.25
+    done
+    return 1
+}
+
+function restore_cdn_xhttp_service_state() {
+    local service="$1"
+    local was_active="$2"
+    local was_enabled="$3"
+
+    if [[ "${was_active}" -eq 1 ]]; then
+        systemctl reset-failed "${service}" >/dev/null 2>&1 || true
+        systemctl -q start "${service}" || return 1
+    else
+        systemctl -q stop "${service}" >/dev/null 2>&1 || true
+    fi
+    if [[ "${was_enabled}" -eq 1 ]]; then
+        systemctl -q enable "${service}" || return 1
+    else
+        systemctl -q disable "${service}" >/dev/null 2>&1 || true
+    fi
+}
+
+function handler_cdn_xhttp_install() {
+    local domain="$(echo "${SCRIPT_CONFIG}" | jq -r '.nginx.domain // empty')"
+    local xhttp_path="$(echo "${SCRIPT_CONFIG}" | jq -r '.xray.path // empty')"
+    local cert_dir="${NGINX_CONFIG_DIR}/certs/${domain}"
+    local site_name="cdn-xhttp-${domain}.conf"
+    local site_path="${CDN_XHTTP_SITE_DIR}/${site_name}"
+    local site_link="${NGINX_CONFIG_DIR}/sites-enabled/${site_name}"
+    local backup_dir=''
+    local xray_backup=''
+    local nginx_was_active=0
+    local nginx_was_enabled=0
+    local xray_was_active=0
+    local xray_was_enabled=0
+    local web_root_created=0
+    local nginx_version=''
+
+    [[ -n "${domain}" && -n "${xhttp_path}" ]] || return 1
+    handler_nginx_install || return 1
+    handler_ssl_install || return 1
+    if cmd_exists 'docker'; then
+        handler_cloudreve_v3 'stop' || true
+        handler_cloudreve_v4 'stop' || true
+    fi
+
+    nginx_version="$(nginx -v 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1)"
+    if [[ -z "${nginx_version}" ]] || ! version_ge "${nginx_version}" '1.25.1'; then
+        _error "$(echo "$I18N_DATA" | jq -r '.handler.cdn_xhttp.nginx_required')"
+    fi
+    if ! nginx -V 2>&1 | grep -q -- '--with-http_v2_module'; then
+        _error "$(echo "$I18N_DATA" | jq -r '.handler.cdn_xhttp.nginx_http2_missing')"
+    fi
+    ensure_nginx_support_files || return 1
+
+    mkdir -p "${SCRIPT_CONFIG_DIR}" "${CDN_XHTTP_SITE_DIR}" "${NGINX_CONFIG_DIR}/sites-enabled" "${NGINX_CONFIG_DIR}/conf.d" || return 1
+    backup_dir="$(mktemp -d "${SCRIPT_CONFIG_DIR}/.cdn-xhttp-install.XXXXXX")" || return 1
+    if [[ -f "${CDN_XHTTP_XRAY_TRANSACTION_BACKUP}" ]]; then
+        xray_backup="${CDN_XHTTP_XRAY_TRANSACTION_BACKUP}"
+    elif [[ -f "${CDN_XHTTP_XRAY_TRANSACTION_ABSENT}" ]]; then
+        xray_backup=''
+    elif [[ -f "${XRAY_CONFIG_PATH}" ]]; then
+        xray_backup="${backup_dir}/xray-config.json"
+        cp -p "${XRAY_CONFIG_PATH}" "${xray_backup}" || { rm -rf "${backup_dir}"; return 1; }
+    fi
+    systemctl -q is-active nginx && nginx_was_active=1
+    systemctl -q is-enabled nginx && nginx_was_enabled=1
+    systemctl -q is-active xray && xray_was_active=1
+    systemctl -q is-enabled xray && xray_was_enabled=1
+
+    restore_cdn_xhttp_install_failure() {
+        if [[ -n "${xray_backup}" && -f "${xray_backup}" ]]; then
+            if [[ -f "${XRAY_CONFIG_PATH}" ]]; then
+                cat "${xray_backup}" >"${XRAY_CONFIG_PATH}" || true
+            else
+                cp -p "${xray_backup}" "${XRAY_CONFIG_PATH}" || true
+            fi
+            chown root:xray "${XRAY_CONFIG_PATH}" >/dev/null 2>&1 || true
+            chmod 0640 "${XRAY_CONFIG_PATH}" >/dev/null 2>&1 || true
+        else
+            rm -f "${XRAY_CONFIG_PATH}"
+        fi
+        restore_cdn_xhttp_service_state xray "${xray_was_active}" "${xray_was_enabled}" || true
+        rm -f "${site_link}" "${site_path}" "${CDN_XHTTP_DEFAULT_CONFIG}"
+        restore_cdn_xhttp_nginx_configs "${backup_dir}" || true
+        if [[ "${web_root_created}" -eq 1 ]]; then
+            rm -rf -- "${CDN_XHTTP_WEB_ROOT}"
+        fi
+        restore_cdn_xhttp_service_state nginx "${nginx_was_active}" "${nginx_was_enabled}" || true
+        rm -f "${CDN_XHTTP_XRAY_TRANSACTION_BACKUP}" "${CDN_XHTTP_XRAY_TRANSACTION_ABSENT}"
+        rm -rf "${backup_dir}"
+    }
+
+    handler_nginx_stop || { rm -rf "${backup_dir}"; return 1; }
+    backup_cdn_xhttp_nginx_configs "${backup_dir}" || {
+        restore_cdn_xhttp_nginx_configs "${backup_dir}" || true
+        rm -rf "${backup_dir}"
+        return 1
+    }
+    local web_root_result=''
+    web_root_result="$(prepare_cdn_xhttp_web_root)" || {
+        restore_cdn_xhttp_nginx_configs "${backup_dir}" || true
+        rm -rf "${backup_dir}"
+        return 1
+    }
+    web_root_created="${web_root_result:-0}"
+
+    if ! exec_ssl '--issue' "--domain=${domain}"; then
+        restore_cdn_xhttp_install_failure
+        return 1
+    fi
+    if [[ ! -s "${cert_dir}/fullchain.pem" || ! -s "${cert_dir}/privkey.pem" ]]; then
+        restore_cdn_xhttp_install_failure
+        _error "$(echo "$I18N_DATA" | jq -r '.handler.cdn_xhttp.cert_missing')"
+    fi
+
+    if ! render_cdn_xhttp_nginx_configs "${domain}" "${xhttp_path}" "${cert_dir}" "${site_path}" "${CDN_XHTTP_DEFAULT_CONFIG}"; then
+        restore_cdn_xhttp_install_failure
+        return 1
+    fi
+    if ! ln -sfn "${site_path}" "${site_link}"; then
+        restore_cdn_xhttp_install_failure
+        return 1
+    fi
+
+    if ! handler_restart || ! wait_cdn_xhttp_socket; then
+        restore_cdn_xhttp_install_failure
+        _error "$(echo "$I18N_DATA" | jq -r '.handler.cdn_xhttp.xray_start_failed')"
+    fi
+
+    if ! nginx -t; then
+        restore_cdn_xhttp_install_failure
+        _error "$(echo "$I18N_DATA" | jq -r '.handler.cdn_xhttp.nginx_test_failed')"
+    fi
+
+    if ! handler_nginx_restart; then
+        restore_cdn_xhttp_install_failure
+        _error "$(echo "$I18N_DATA" | jq -r '.handler.cdn_xhttp.nginx_start_failed')"
+    fi
+
+    if ! SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --arg version "${nginx_version}" '.nginx.version = $version')" ||
+        ! persist_script_config; then
+        restore_cdn_xhttp_install_failure
+        return 1
+    fi
+    rm -f "${CDN_XHTTP_XRAY_TRANSACTION_BACKUP}" "${CDN_XHTTP_XRAY_TRANSACTION_ABSENT}"
+    rm -rf "${backup_dir}"
+    commit_script_config_transaction
+    echo -e "${GREEN}[$(echo "$I18N_DATA" | jq -r '.title.info')]${NC} $(echo "$I18N_DATA" | jq -r '.handler.cdn_xhttp.installed')${domain}" >&2
+}
+
 # =============================================================================
 # 函数名称: handler_ssl_install
 # 功能描述: 安装 SSL 证书管理工具 (acme.sh)。
@@ -2798,11 +3164,17 @@ function main() {
         handler_script_config || exit 1 # 更新脚本配置
         ;;
     --xray-config)
-        handler_x25519_config || exit 1   # 生成 x25519 配置
-        handler_xray_config || exit 1     # 更新 Xray 配置
-        handler_sni_config "$1" || exit 1 # 在 Xray 配置验证通过后处理 Nginx/SNI
+        if [[ "$(echo "${SCRIPT_CONFIG}" | jq -r '.xray.tag')" == 'CDNXHTTP' ]]; then
+            handler_xray_config || exit 1
+        else
+            handler_x25519_config || exit 1
+            handler_xray_config || exit 1
+            handler_sni_config "$1" || exit 1
+        fi
         ;;
     --sni-ports) handler_check_sni_ports ;;
+    --cdn-xhttp-ports) exec_check '--cdn-xhttp-ports' || exit 1 ;;
+    --cdn-xhttp-install) handler_cdn_xhttp_install ;;
     --routing) handler_routing "$@" ;; # 处理路由规则
     --change-domain)
         handler_change_domain "$1" || exit 1 # 处理域名配置

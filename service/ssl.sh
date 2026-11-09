@@ -351,6 +351,14 @@ EOF
     local issue_status=1
     local issue_retry=1
     local issue_retry_message=''
+    local acme_existing_fullchain="${HOME}/.acme.sh/${DOMAIN}_ecc/fullchain.cer"
+    local acme_existing_key="${HOME}/.acme.sh/${DOMAIN}_ecc/${DOMAIN}.key"
+
+    acme_result_is_current() {
+        local output="$1"
+        [[ -s "${acme_existing_fullchain}" && -s "${acme_existing_key}" ]] &&
+            [[ "${output}" == *'Domains not changed.'* && "${output}" == *'Skipping.'* ]]
+    }
     local -a issue_args=(
         --issue -d "${DOMAIN}"
         --webroot "${ACME_WEBROOT_PATH}"
@@ -372,6 +380,9 @@ EOF
             print_warn "${issue_retry_message}"
             issue_output="$("${HOME}/.acme.sh/acme.sh" "${issue_args[@]}" 2>&1)"
             issue_status=$?
+            if [[ ${issue_status} -ne 0 ]] && acme_result_is_current "${issue_output}"; then
+                issue_status=0
+            fi
             [[ -n "${issue_output}" ]] && printf "%s\n" "${issue_output}" >&2
             [[ ${issue_status} -eq 0 ]] && break
         done
@@ -381,6 +392,9 @@ EOF
     else
         issue_output="$("${HOME}/.acme.sh/acme.sh" "${issue_args[@]}" 2>&1)"
         issue_status=$?
+        if [[ ${issue_status} -ne 0 ]] && acme_result_is_current "${issue_output}"; then
+            issue_status=0
+        fi
         [[ -n "${issue_output}" ]] && printf "%s\n" "${issue_output}" >&2
         if [[ ${issue_status} -ne 0 ]]; then
             if [[ ${CA_SERVER_EXPLICIT} -eq 0 && "${issue_output,,}" == *"pending"* && "${issue_output,,}" == *"the ca is processing your order"* ]]; then
@@ -402,6 +416,9 @@ EOF
                     print_warn "${issue_retry_message}"
                     issue_output="$("${HOME}/.acme.sh/acme.sh" "${issue_args[@]}" 2>&1)"
                     issue_status=$?
+                    if [[ ${issue_status} -ne 0 ]] && acme_result_is_current "${issue_output}"; then
+                        issue_status=0
+                    fi
                     [[ -n "${issue_output}" ]] && printf "%s\n" "${issue_output}" >&2
                     [[ ${issue_status} -eq 0 ]] && break
                 done

@@ -10,6 +10,7 @@
   * trojan (Trojan-XHTTP-REALITY)
   * Fallback (包含 VLESS-Vision-REALITY、VLESS-XHTTP-REALITY)
   * SNI (包含 Vision_REALITY、XHTTP_REALITY、XHTTP_TLS)
+  * CDN-XHTTP (`VLESS+XHTTP+TLS`，Nginx 前置、静态伪装站、Unix Socket 回源)
 * SNI 配置由 Nginx 实现 SNI 分流，适合过 CDN、上下行分离、多网站共存等需求
 * SNI 分享链接实现了上下行分离(上行 xhttp+TLS+CDN | 下行 xhttp+Reality、上行 xhttp+Reality | 下行 xhttp+TLS+CDN)
 * SNI 配置支持管理自定义域名与反代应用，每个站点拥有独立证书、独立站点配置、独立 stream 映射与 UDS
@@ -48,7 +49,7 @@
 
 1. 如果安装成功，但无法使用，请检查服务器是否开启对应端口，可通过 `https://tcp.ping.pe/ip:port` 验证服务器端口是否开放。
 2. 使用 SNI 配置前，请确保 VPS 的 HTTP(80) 与 HTTPS(443) 端口开放。
-3. 使用 SNI 配置前，请不要开启 CDN 保护，不然无法正常申请 SSL 证书。
+3. 使用 SNI 配置前，请不要开启 CDN 保护，不然无法正常申请 SSL 证书。CDN-XHTTP 模式则要求域名通过 CDN 代理，并使用 Cloudflare `Full (strict)`。
 4. 上下行分离详情请看 [XHTTP: Beyond REALITY][XHTTP] 与 [xhttp 五合一配置][xhttp 五合一配置] 了解。
 5. 使用 SNI 获取证书时遇到 【Could not get nonce, let's try again】 请查看 [ZeroSSL 状态页](https://status.zerossl.com/)，大概率是 ZeroSSL 的【Free ACME Service】处于 【Service disruption】或【Service outage】状态。
 
@@ -65,6 +66,7 @@
 9. v2026.11.07-r1 版本将已测试系统更新为 Debian 11、12、13，并调整其他系统的兼容性说明。
 10. v2026.11.08 版本按实际版本同步官方 Xray 安装器，增加 Xray 配置事务回滚、Nginx 非 root worker 与二进制/模块原子更新、DNS 分族校验、TCP 超时和 HTTP 重定向检测；XHTTP+Cloudflare 普通 TLS 链接改用兼容性更好的 `packet-up`，上下行分离链接按官方要求使用 `stream-up`。
 11. v2026.11.08-r1 版本修复 UUID 生成与校验、上传/更新失败回滚、mKCP FinalMask、XHTTP 路径边界和 REALITY 日志权限问题；限制 Cloudreve 管理端口仅本机访问，并加强 ACME、Docker 安装脚本与 Cloudreve 更新的失败保护。
+12. v2026.11.09 版本新增 CDN-XHTTP 安装模式：Nginx 终止 TLS、提供静态伪装站，并通过 Unix Socket 将秘密路径转发至 Xray XHTTP `packet-up`；证书使用 acme.sh HTTP-01 webroot 签发，不依赖 Cloudflare API Token，同时完善切换模式和卸载清理。
 
 ## 分享链接
 
@@ -104,6 +106,10 @@ SNI 配置中，CDN 的分享链接 Alpn 默认为 H2，如有 H3 需求，请�
     ```sh
     bash ${HOME}/Xray-script.sh --fallback
     ```
+
+* CDN-XHTTP
+
+  在 `完整安装 -> 自定义配置 -> 选择 7` 中进入。该模式由 Nginx 直接占用 HTTP 443，与 SNI `stream` 分流互斥；切换时会备份并在失败时恢复运行配置。安装前需要将代理域名通过 CDN 指向源站，并保持 Cloudflare 橙云、`Full (strict)`、gRPC 开关启用；证书验证路径 `/.well-known/acme-challenge/` 和秘密 XHTTP 路径应绕过缓存与挑战页面。源站 443 建议只允许 Cloudflare IP，或启用 Authenticated Origin Pulls。脚本会安装或更新脚本管理的 Nginx，并使用 acme.sh 文件认证申请证书，不需要 Cloudflare API Token。
 
 * 快速启动(界面)
 
@@ -174,6 +180,7 @@ WARP Proxy : 已启动
 | Nginx | `/usr/local/nginx` |
 | Nginx 日志 | `/var/log/nginx` |
 | Nginx 运行时 Socket | `/run/xray-script/nginx` |
+| CDN-XHTTP 静态站点 | `/var/www/xray-cdn` |
 | systemd 服务 | `/etc/systemd/system/xray.service`、`/etc/systemd/system/nginx.service` |
 | Cloudreve v3 | `$HOME/.xray-script/docker/cloudreve/v3` |
 | Cloudreve v4 | `$HOME/.xray-script/docker/cloudreve/v4` |
@@ -215,6 +222,8 @@ WARP Proxy : 已启动
 
 [kirin10000/Xray-script][kirin10000/Xray-script]
 
+[wulabing/Xray_onekey nginx_forward][wulabing-nginx-forward]（Nginx 前置结构参考）
+
 [Cloudreve][cloudreve]
 
 **此脚本仅供交流学习使用，请勿使用此脚本行违法之事。网络非法外之地，行非法之事，必将接受法律制裁。**
@@ -229,3 +238,4 @@ WARP Proxy : 已启动
 [v2ray-rules-dat]: https://github.com/Loyalsoldier/v2ray-rules-dat (V2Ray 路由规则文件加强版)
 [kirin10000/Xray-script]: https://github.com/kirin10000/Xray-script (kirin10000/Xray-script)
 [cloudreve]: https://github.com/cloudreve/cloudreve (cloudreve)
+[wulabing-nginx-forward]: https://github.com/wulabing/Xray_onekey/tree/nginx_forward (Xray_onekey nginx_forward)

@@ -236,6 +236,7 @@ function processes_xray_config() {
     4) XTLS_CONFIG='Trojan' ;;   # 选择 4 对应 Trojan
     5) XTLS_CONFIG='Fallback' ;; # 选择 5 对应 Fallback
     6) XTLS_CONFIG='SNI' ;;      # 选择 6 对应 SNI
+    7) XTLS_CONFIG='CDNXHTTP' ;; # 选择 7 对应 Nginx 前置 XHTTP
     *) XTLS_CONFIG='Vision' ;;   # 其他情况 (包括 2 和默认) 对应 Vision
     esac
     # 如果选择了 SNI 配置
@@ -243,6 +244,15 @@ function processes_xray_config() {
         processes_ca_vendor 'init'
         # 调用 processes_web_config 处理 SNI 特殊流程 (不执行完整安装)
         processes_web_config 'n'
+    elif [[ "${XTLS_CONFIG}" == 'CDNXHTTP' ]]; then
+        processes_ca_vendor 'init'
+        exec_handler '--cdn-xhttp-ports'
+        exec_handler '--check-version' "${XTLS_CONFIG}"
+        exec_handler '--install' 'release'
+        exec_handler '--script-config' "${XTLS_CONFIG}"
+        exec_handler '--xray-config'
+        exec_handler '--cdn-xhttp-install'
+        exec_handler '--share'
     else
         # 对于其他配置类型
         exec_handler '--check-version' "${XTLS_CONFIG}" # 安装前校验协议最低版本

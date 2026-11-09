@@ -1,0 +1,9 @@
+# Managed by Xray-script CDN-XHTTP mode
+server {
+    listen 443 ssl default_server;
+    __IPV6_LISTEN_443__
+    server_name _;
+    ssl_reject_handshake on;
+    access_log off;
+    return 444;
+}

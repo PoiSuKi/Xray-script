@@ -177,11 +177,17 @@ function cache_json_data() {
 function get_common_config() {
     local inbound_index=$1 # 获取 inbound 索引参数
     local remote_host=''
+    local config_tag="$(echo "${SCRIPT_CONFIG}" | jq -r '.xray.tag // empty')"
 
-    # 获取服务器的公网 IPv4 地址作为远程主机地址
-    remote_host="$(curl -fsSL --retry 5 --retry-delay 2 --connect-timeout 10 --max-time 20 ipv4.icanhazip.com)" ||
-        return 1
-    [[ "${remote_host}" =~ ^[0-9a-fA-F:.]+$ ]] || return 1
+    if [[ "${config_tag,,}" == 'cdnxhttp' ]]; then
+        remote_host="$(echo "${SCRIPT_CONFIG}" | jq -r '.nginx.domain // empty')"
+        [[ -n "${remote_host}" ]] || return 1
+    else
+        # 获取服务器的公网 IPv4 地址作为远程主机地址
+        remote_host="$(curl -fsSL --retry 5 --retry-delay 2 --connect-timeout 10 --max-time 20 ipv4.icanhazip.com)" ||
+            return 1
+        [[ "${remote_host}" =~ ^[0-9a-fA-F:.]+$ ]] || return 1
+    fi
     CLIENT_CONFIG[remote_host]="${remote_host}"
     # 从脚本配置中获取端口号
     CLIENT_CONFIG[port]="$(echo "${SCRIPT_CONFIG}" | jq -r ".xray.port")"
@@ -220,6 +226,13 @@ function get_common_config() {
     CLIENT_CONFIG[server_name]="$(echo "${XRAY_CONFIG}" | jq -r --argjson i "${inbound_index}" --argjson random "$(bash "${GENERATE_PATH}" '--random')" '.inbounds[$i].streamSettings.realitySettings.serverNames? | if . == null then empty else .[$random % length] end')"
     # 从 Xray 配置中随机获取一个 Reality 的 Short ID (shortIds)
     CLIENT_CONFIG[short_id]="$(echo "${XRAY_CONFIG}" | jq -r --argjson i "${inbound_index}" --argjson random "$(bash "${GENERATE_PATH}" '--random')" '.inbounds[$i].streamSettings.realitySettings.shortIds? | if . == null then empty else .[$random % length] end')"
+    if [[ "${config_tag,,}" == 'cdnxhttp' ]]; then
+        CLIENT_CONFIG[server_name]="${remote_host}"
+        CLIENT_CONFIG[security]='tls'
+        CLIENT_CONFIG[public_key]=''
+        CLIENT_CONFIG[short_id]=''
+        CLIENT_CONFIG[flow]=''
+    fi
 }
 
 # =============================================================================
@@ -326,8 +339,21 @@ EOF
 # =============================================================================
 function show_client_config() {
     local support_x25519mlkem768='false'
+    local xhttp_meta=''
+    local xhttp_mode='auto'
     if [[ "${CLIENT_CONFIG[security],,}" == 'reality' || "${XHTTP_EXTRA}" == *'"security": "reality"'* ]]; then
         support_x25519mlkem768='true'
+    fi
+    if [[ "${CLIENT_CONFIG[client_type],,}" == 'xhttp' ]]; then
+        if [[ "${CLIENT_CONFIG[security],,}" == 'tls' ]]; then
+            xhttp_mode='packet-up'
+        fi
+        xhttp_meta="$(cat <<EOF
+HOST             : ${CLIENT_CONFIG[server_name]}
+ALPN             : h2
+MODE             : ${xhttp_mode}
+EOF
+)"
     fi
     # 使用 Here Document 打印客户端配置的标题和各项参数
     cat <<EOF
@@ -348,6 +374,29 @@ PublicKey        : ${CLIENT_CONFIG[public_key]}
 ShortId          : ${CLIENT_CONFIG[short_id]}
 SupportX25519MLKEM768 : ${support_x25519mlkem768}
 SpiderX          : /
+${xhttp_meta}
+EOF
+}
+
+function show_cdn_xhttp_mihomo_config() {
+    cat <<EOF
+
+------------------ Mihomo ------------------
+- name: ${CLIENT_CONFIG[tag]}
+  type: vless
+  server: ${CLIENT_CONFIG[remote_host]}
+  port: ${CLIENT_CONFIG[port]}
+  uuid: ${CLIENT_CONFIG[uuid]}
+  network: xhttp
+  tls: true
+  udp: true
+  servername: ${CLIENT_CONFIG[server_name]}
+  client-fingerprint: chrome
+  alpn: [h2]
+  xhttp-opts:
+    host: ${CLIENT_CONFIG[server_name]}
+    path: ${CLIENT_CONFIG[path]}
+    mode: packet-up
 EOF
 }
 
@@ -482,6 +531,16 @@ function get_sni_tls_share_link() {
     SHARE_LINK="${SHARE_LINK_COMPONENT_VLESS}${SHARE_LINK_COMPONENT_TLS}${SHARE_LINK_COMPONENT_XHTTP}"
 }
 
+function get_cdn_xhttp_share_link() {
+    CLIENT_CONFIG[security]='tls'
+    CLIENT_CONFIG[server_name]="$(echo "${SCRIPT_CONFIG}" | jq -r '.nginx.domain')"
+    CLIENT_CONFIG[remote_host]="${CLIENT_CONFIG[server_name]}"
+    XHTTP_EXTRA=''
+    get_share_link_component
+    SHARE_LINK_COMPONENT_XHTTP="${SHARE_LINK_COMPONENT_XHTTP}&host=${CLIENT_CONFIG[server_name]}"
+    SHARE_LINK="${SHARE_LINK_COMPONENT_VLESS}${SHARE_LINK_COMPONENT_TLS}${SHARE_LINK_COMPONENT_XHTTP}"
+}
+
 # =============================================================================
 # 函数名称: get_sni_tls_down_share_link
 # 功能描述: 为 SNI + TLS + 下行模式 (带 extra 参数) 生成完整的分享链接。
@@ -527,6 +586,9 @@ function show_config() {
 
     # 显示客户端配置信息
     show_client_config
+    if [[ "${CLIENT_CONFIG[tag],,}" == 'cdn_xhttp' || "${CLIENT_CONFIG[tag],,}" == 'cdnxhttp' ]]; then
+        show_cdn_xhttp_mihomo_config
+    fi
 
     # 如果存在额外配置 (XHTTP_EXTRA)，则显示它
     if [[ "${XHTTP_EXTRA}" ]]; then
@@ -655,6 +717,10 @@ function main() {
     trojan) get_trojan_share_link ;;  # Trojan 模式
     fallback) show_fallback_config ;; # Fallback 模式
     sni) show_sni_config ;;           # SNI 模式
+    cdnxhttp)
+        CLIENT_CONFIG[tag]='cdn_xhttp'
+        get_cdn_xhttp_share_link
+        ;;
     *) get_vision_share_link ;;       # 默认为 Vision 模式
     esac
 

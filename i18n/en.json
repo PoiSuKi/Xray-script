@@ -67,6 +67,7 @@
       "option4": "Trojan+XHTTP+REALITY",
       "option5": "Dual Protocol Composite",
       "option6": "SNI Split Composite",
+      "option7": "VLESS+XHTTP+TLS (Nginx front/CDN)",
       "info1": "mKCP sacrifices bandwidth to reduce latency.",
       "info2": "XTLS(Vision) solves TLS in TLS issue",
       "info3": "XHTTP supports all scenarios",
@@ -74,7 +75,8 @@
       "info3_2": "v2rayN&G clients have global mux.cool settings, disable before using XHTTP",
       "info4": "Replace VLESS with Trojan",
       "info5": "Use VLESS+Vision+REALITY fallback to VLESS+XHTTP on port 443",
-      "info6": "SNI-based split through Nginx on port 443, supports CDN and direct connection"
+      "info6": "SNI-based split through Nginx on port 443, supports CDN and direct connection",
+      "info7": "Nginx terminates TLS and serves a decoy site, then forwards the secret path to XHTTP over a Unix socket; use Cloudflare Full (strict)"
     },
     "web_config": {
       "title": "Web Config",
@@ -161,7 +163,7 @@
     },
     "xray": {
       "config_update": "Updating Xray configuration",
-      "min_version": "XHTTP/Trojan/Fallback/SNI requires Xray v25.3.6 or later; current version: ${version}",
+      "min_version": "XHTTP/Trojan/Fallback/SNI/CDN-XHTTP requires Xray v25.3.6 or later; current version: ${version}",
       "mkcp_min_version": "mKCP FinalMask requires Xray v26.6.1 or later; current version: ${version}"
     },
     "reality": {
@@ -198,6 +200,19 @@
     },
     "sni": {
       "port_guard_fail": "SNI initialization stopped: required port check failed"
+    },
+    "cdn_xhttp": {
+      "port_guard_fail": "CDN-XHTTP initialization stopped: required port check failed",
+      "nginx_required": "CDN-XHTTP requires the managed Nginx v1.25.1 or newer",
+      "nginx_http2_missing": "The installed Nginx lacks http_v2_module and cannot forward XHTTP",
+      "cert_missing": "The certificate files are incomplete; reinstall CDN-XHTTP",
+      "socket_missing": "The Xray CDN-XHTTP Unix socket is not ready",
+      "nginx_test_failed": "Nginx configuration validation failed; the previous configuration was restored",
+      "xray_start_failed": "Xray failed to start; the previous configuration was restored",
+      "nginx_start_failed": "Nginx failed to start; the previous configuration was restored",
+      "installed": "CDN-XHTTP installed: ",
+      "purged": "CDN-XHTTP configuration, certificate, and site files were removed",
+      "port_fixed": "CDN-XHTTP is always exposed on port 443 through Nginx"
     }
   },
   "bbr": {
@@ -278,6 +293,10 @@
       "allow_fail": "Failed to auto-allow port: ",
       "manual_allow": "Please manually allow the port and retry (example: ufw allow <port>/<protocol> or firewall-cmd --permanent --add-port=<port>/<protocol> && firewall-cmd --reload): ",
       "all_pass": "SNI required port checks passed"
+    },
+    "cdn_xhttp_ports": {
+      "start": "Checking required CDN-XHTTP ports (TCP 80/443)...",
+      "all_pass": "CDN-XHTTP required port checks passed"
     },
     "uuid": {
       "check": "Checking UUID type: ",

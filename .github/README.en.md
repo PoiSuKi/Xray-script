@@ -11,6 +11,7 @@
   * Trojan (Trojan-XHTTP-REALITY)
   * Fallback (includes VLESS-Vision-REALITY and VLESS-XHTTP-REALITY)
   * SNI (includes Vision_REALITY, XHTTP_REALITY, XHTTP_TLS)
+  * CDN-XHTTP (`VLESS+XHTTP+TLS`, Nginx front, static decoy site, Unix-socket origin)
 * SNI configuration uses Nginx to implement SNI traffic splitting, suitable for CDN routing, upstream/downstream separation, and multi-site coexistence
 * SNI share links support upstream/downstream separation (upstream xhttp+TLS+CDN | downstream xhttp+Reality, upstream xhttp+Reality | downstream xhttp+TLS+CDN)
 * SNI configuration supports managing custom domains and reverse proxy apps, with independent certificates, site configs, stream mappings, and UDS per site
@@ -49,7 +50,7 @@
 
 1. If installation succeeds but service is unusable, check whether the server ports are open. You can verify using `https://tcp.ping.pe/ip:port`.
 2. Before using SNI configuration, ensure VPS HTTP (80) and HTTPS (443) ports are open.
-3. Before using SNI configuration, do not enable CDN protection, otherwise SSL issuance may fail.
+3. Before using SNI configuration, do not enable CDN protection, otherwise SSL issuance may fail. CDN-XHTTP instead requires a proxied domain and Cloudflare `Full (strict)`.
 4. For upstream/downstream separation details, see [XHTTP: Beyond REALITY][XHTTP] and [xhttp 五合一配置][xhttp 五合一配置].
 5. If you encounter 【Could not get nonce, let's try again】 while issuing certificates with SNI, check the [ZeroSSL status page](https://status.zerossl.com/). Most likely ZeroSSL 【Free ACME Service】 is in 【Service disruption】 or 【Service outage】.
 
@@ -66,6 +67,7 @@
 9. v2026.11.07-r1 updates the tested systems to Debian 11, 12, and 13, and clarifies the compatibility note for other systems.
 10. v2026.11.08 synchronizes the official Xray installer with the installed version, adds transactional Xray config rollback, an unprivileged Nginx worker with atomic binary/module updates, DNS family checks, TCP timeouts, and HTTP redirect detection. Regular XHTTP TLS links through Cloudflare now use the more compatible `packet-up` mode, while split up/down links use `stream-up` as required by the official behavior.
 11. v2026.11.08-r1 fixes UUID generation and validation, installer/update rollback, mKCP FinalMask, XHTTP path boundaries, and REALITY log ownership; restricts the Cloudreve management port to localhost and hardens the ACME, Docker installer, and Cloudreve update failure paths.
+12. v2026.11.09 adds CDN-XHTTP: Nginx terminates TLS, serves a static decoy site, and forwards the secret path to Xray XHTTP `packet-up` over a Unix socket. acme.sh HTTP-01 webroot issuance replaces the Cloudflare API Token dependency, and mode switching plus uninstall cleanup are included.
 
 ## Share Links
 
@@ -105,6 +107,10 @@ In SNI configuration, CDN share links use H2 as default ALPN. If you need H3, mo
     ```sh
     bash ${HOME}/Xray-script.sh --fallback
     ```
+
+  * CDN-XHTTP
+
+    Open `Full Installation -> Custom Configuration -> option 7`. Nginx owns HTTP port 443 in this mode, so it is mutually exclusive with SNI stream routing; switching modes backs up the runtime configuration and restores it on failure. Point the proxied domain at the origin through Cloudflare, keep the orange cloud enabled, select `Full (strict)`, and enable gRPC compatibility. Bypass cache and challenge pages for `/.well-known/acme-challenge/` and the secret XHTTP path. Restrict origin port 443 to Cloudflare IP ranges or enable Authenticated Origin Pulls. The script installs and updates managed Nginx and requests a certificate through acme.sh webroot, without a Cloudflare API Token.
 
 * Quick start (UI)
 
@@ -175,6 +181,7 @@ Other systems may work, but are untested and may have issues.
 | Nginx | `/usr/local/nginx` |
 | Nginx logs | `/var/log/nginx` |
 | Nginx runtime socket | `/run/xray-script/nginx` |
+| CDN-XHTTP static site | `/var/www/xray-cdn` |
 | systemd services | `/etc/systemd/system/xray.service`, `/etc/systemd/system/nginx.service` |
 | Cloudreve v3 | `$HOME/.xray-script/docker/cloudreve/v3` |
 | Cloudreve v4 | `$HOME/.xray-script/docker/cloudreve/v4` |
@@ -216,6 +223,8 @@ The script checks and installs the following Debian dependencies as needed. Xray
 
 [kirin10000/Xray-script][kirin10000/Xray-script]
 
+[wulabing/Xray_onekey nginx_forward][wulabing-nginx-forward] (Nginx front architecture reference)
+
 [Cloudreve][cloudreve]
 
 **This script is for study and communication only. Do not use it for illegal purposes. Illegal acts on the network are still illegal and will be punished by law.**
@@ -230,3 +239,4 @@ The script checks and installs the following Debian dependencies as needed. Xray
 [v2ray-rules-dat]: https://github.com/Loyalsoldier/v2ray-rules-dat (V2Ray 路由规则文件加强版)
 [kirin10000/Xray-script]: https://github.com/kirin10000/Xray-script (kirin10000/Xray-script)
 [cloudreve]: https://github.com/cloudreve/cloudreve (cloudreve)
+[wulabing-nginx-forward]: https://github.com/wulabing/Xray_onekey/tree/nginx_forward (Xray_onekey nginx_forward)

@@ -429,13 +429,90 @@ test("XHTTP and SNI enforce the minimum Xray version", () => {
   assert.match(handler, /function version_ge/);
   assert.match(
     configure,
-    /xhttp \| trojan \| fallback \| sni\)[\s\S]{0,260}installed_version="\$\(xray -version/,
+    /xhttp \| trojan \| fallback \| sni \| cdnxhttp\)[\s\S]{0,260}installed_version="\$\(xray -version/,
   );
   assert.match(collect, /handler_check_protocol_version "\$\{CONFIG_TAG\}"/);
   assert.match(
     precheck,
     /requested_version=[\s\S]{0,260}version_ge "\$\{requested_version\}" 'v25\.3\.6'/,
   );
+});
+
+test("CDN-XHTTP uses an Nginx HTTP front and a private Xray Unix socket", () => {
+  const template = JSON.parse(read("config/xray/CDNXHTTP.json"));
+  const site = read("config/nginx/cdn-xhttp/site.conf.template");
+  const access = read("config/nginx/cdn-xhttp/https-default.conf.template");
+  const inbound = template.inbounds[1];
+
+  assert.equal(inbound.listen, "/run/xray-script/xray/cdn_xhttp.sock,0660");
+  assert.equal(inbound.streamSettings.network, "xhttp");
+  assert.equal(inbound.streamSettings.security, "none");
+  assert.equal(inbound.streamSettings.xhttpSettings.mode, "packet-up");
+  assert.equal(inbound.streamSettings.xhttpSettings.path, "/yourpath/");
+  assert.equal(inbound.sniffing.enabled, false);
+
+  assert.match(site, /listen 443 ssl;/);
+  assert.match(site, /http2 on;/);
+  assert.match(site, /location \^~ __XHTTP_PATH__/);
+  assert.match(site, /grpc_pass unix:__SOCKET_PATH__;/);
+  assert.match(site, /location \^~ \/\.well-known\/acme-challenge\//);
+  assert.match(site, /try_files \$uri \$uri\/ =404;/);
+  assert.match(site, /index index\.html;\s+client_header_timeout 5m;/);
+  assert.doesNotMatch(
+    site,
+    /location \^~ __XHTTP_PATH__ \{[\s\S]*?client_header_timeout/,
+  );
+  assert.match(access, /listen 443 ssl default_server;/);
+  assert.match(access, /ssl_reject_handshake on;/);
+});
+
+test("CDN-XHTTP installation and purge are transactional", () => {
+  const handler = read("core/handler.sh");
+  const install = functionBody(handler, "handler_cdn_xhttp_install");
+  const purge = functionBody(handler, "handler_purge");
+
+  assert.match(handler, /--cdn-xhttp-install/);
+  assert.match(handler, /--cdn-xhttp-ports/);
+  assert.match(handler, /function backup_cdn_xhttp_nginx_configs/);
+  assert.match(handler, /function restore_cdn_xhttp_nginx_configs/);
+  assert.match(handler, /function remove_cdn_xhttp_files/);
+  assert.match(install, /handler_restart \|\| ! wait_cdn_xhttp_socket/);
+  assert.match(install, /nginx -t/);
+  assert.match(install, /if ! handler_nginx_restart; then/);
+  assert.match(install, /commit_script_config_transaction/);
+  assert.match(purge, /handler_nginx_stop/);
+  assert.match(purge, /remove_cdn_xhttp_files/);
+  assert.match(handler, /modules-enabled\/stream\.conf/);
+});
+
+test("acme.sh unchanged certificate results are treated as current", () => {
+  const ssl = read("service/ssl.sh");
+  const issue = functionBody(ssl, "issue_certificate");
+
+  assert.match(issue, /Domains not changed\./);
+  assert.match(issue, /Skipping\./);
+  assert.match(issue, /acme_result_is_current/);
+  assert.match(issue, /acme_existing_fullchain/);
+});
+
+test("CDN-XHTTP shares TLS/XHTTP packet-up and prints Mihomo YAML", () => {
+  const share = read("core/share.sh");
+  const main = read("core/main.sh");
+  const menu = read("core/menu.sh");
+  const zh = JSON.parse(read("i18n/zh.json"));
+  const en = JSON.parse(read("i18n/en.json"));
+
+  assert.match(menu, /protocol_config\.option7/);
+  assert.match(main, /7\) XTLS_CONFIG='CDNXHTTP'/);
+  assert.match(main, /--cdn-xhttp-install/);
+  assert.match(share, /function get_cdn_xhttp_share_link/);
+  assert.match(share, /xhttp-opts:/);
+  assert.match(share, /mode: packet-up/);
+  assert.match(share, /cdnxhttp\)/);
+  assert.ok(zh.menu.protocol_config.option7);
+  assert.ok(en.menu.protocol_config.option7);
+  assert.ok(zh.handler.cdn_xhttp.purged);
+  assert.ok(en.handler.cdn_xhttp.purged);
 });
 
 test("REALITY target validation requires negotiated H2 ALPN", () => {

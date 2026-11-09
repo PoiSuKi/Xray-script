@@ -438,6 +438,42 @@ function check_sni_ports() {
 }
 
 # =============================================================================
+# 函数名称: check_cdn_xhttp_ports
+# 功能描述: CDN-XHTTP 只使用 TCP 80/443，检查端口占用与防火墙放行状态。
+# =============================================================================
+function check_cdn_xhttp_ports() {
+    local -a required_ports=('80 tcp' '443 tcp')
+    local port=''
+    local protocol=''
+    local port_spec=''
+    local occupied_by=''
+
+    _info "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.cdn_xhttp_ports.start")"
+
+    for port_spec in "${required_ports[@]}"; do
+        read -r port protocol <<<"${port_spec}"
+        _test "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.sni_ports.occupied_check")${port}/${protocol}"
+        occupied_by="$(get_listening_process_by_port "${port}" "${protocol}")"
+        if [[ -n "${occupied_by}" ]] && ! listener_is_script_managed "${occupied_by}"; then
+            _fail "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.sni_ports.occupied_fail")${port}/${protocol} (${occupied_by})"
+            return 1
+        fi
+        if [[ -z "${occupied_by}" ]]; then
+            _pass "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.sni_ports.occupied_pass")${port}/${protocol}"
+        else
+            _pass "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.sni_ports.occupied_managed")${port}/${protocol} (${occupied_by})"
+        fi
+
+        if ! ensure_firewall_port_open "${port}" "${protocol}"; then
+            return 1
+        fi
+    done
+
+    _pass "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.cdn_xhttp_ports.all_pass")"
+    return 0
+}
+
+# =============================================================================
 # 函数名称: get_tls_info
 # 功能描述: 使用 openssl s_client 命令获取指定域名的 TLS 信息。
 # 参数:
@@ -1062,6 +1098,7 @@ function main() {
     --xray) check_xray_version_exists "$@" >&2 ;; # 检查 Xray 版本
     --email) validate_email "$@" >&2 ;;           # 验证邮箱
     --sni-ports) check_sni_ports "$@" >&2 ;;      # 检查 SNI 必需端口与防火墙状态
+    --cdn-xhttp-ports) check_cdn_xhttp_ports "$@" >&2 ;;
     --proxy-target) check_proxy_target "$@" ;;
     --custom-domain) check_custom_site_domain "$@" >&2 ;;
     --list-index) check_list_index "$@" >&2 ;;

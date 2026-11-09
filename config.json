@@ -1,5 +1,5 @@
 {
-  "version": "v2026.11.08-r1",
+  "version": "v2026.11.09",
   "path": "",
   "language": "",
   "xray": {
@@ -31,11 +31,13 @@
   },
   "nginx": {
     "version": "",
+    "deployment": "",
     "ca": "",
     "ca_server": "zerossl",
     "domain": "",
     "cdn": "",
     "web": "",
+    "web_root": "",
     "custom_sites": []
   },
   "target": {

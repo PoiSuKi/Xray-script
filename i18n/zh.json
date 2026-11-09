@@ -67,6 +67,7 @@
       "option4": "Trojan+XHTTP+REALITY",
       "option5": "双协议复合配置",
       "option6": "SNI分流复合配置",
+      "option7": "VLESS+XHTTP+TLS (Nginx 前置/CDN)",
       "info1": "mKCP 牺牲带宽来降低延迟。传输同样的内容，mKCP 一般比 TCP 消耗更多的流量",
       "info2": "XTLS(Vision) 解决 TLS in TLS 问题",
       "info3": "XHTTP 全场景通吃的时代正式到来(详情: https://github.com/XTLS/Xray-core/discussions/4113    )",
@@ -74,7 +75,8 @@
       "info3_2": "此外 v2rayN&G 客户端有全局 mux.cool 设置，用 XHTTP 前记得关闭，不然连不上新版 Xray 服务端",
       "info4": "VLESS 替换为 Trojan",
       "info5": "利用 VLESS+Vision+REALITY 回落 VLESS+XHTTP 共用 443 端口",
-      "info6": "通过 Nginx 的 SNI 分流共用 443 端口，实现 REALITY 直连与过 CDN 共存"
+      "info6": "通过 Nginx 的 SNI 分流共用 443 端口，实现 REALITY 直连与过 CDN 共存",
+      "info7": "Nginx 终止 TLS 并提供静态伪装站，秘密路径通过 Unix Socket 转发 XHTTP；需使用 Cloudflare Full (strict)"
     },
     "web_config": {
       "title": "Web 配置",
@@ -161,7 +163,7 @@
     },
     "xray": {
       "config_update": "正在更新 Xray 配置",
-      "min_version": "XHTTP/Trojan/Fallback/SNI 配置要求 Xray v25.3.6 或更高版本，当前为 ${version}",
+      "min_version": "XHTTP/Trojan/Fallback/SNI/CDN-XHTTP 配置要求 Xray v25.3.6 或更高版本，当前为 ${version}",
       "mkcp_min_version": "mKCP FinalMask 配置要求 Xray v26.6.1 或更高版本，当前为 ${version}"
     },
     "reality": {
@@ -198,6 +200,19 @@
     },
     "sni": {
       "port_guard_fail": "SNI 初始化已停止：必需端口检查未通过"
+    },
+    "cdn_xhttp": {
+      "port_guard_fail": "CDN-XHTTP 初始化已停止：必需端口检查未通过",
+      "nginx_required": "CDN-XHTTP 需要脚本管理的 Nginx v1.25.1 或更高版本",
+      "nginx_http2_missing": "当前 Nginx 缺少 http_v2_module，无法转发 XHTTP",
+      "cert_missing": "证书文件不完整，请重新安装 CDN-XHTTP",
+      "socket_missing": "Xray CDN-XHTTP Unix Socket 未就绪",
+      "nginx_test_failed": "Nginx 配置校验失败，已恢复原配置",
+      "xray_start_failed": "Xray 启动失败，已恢复原配置",
+      "nginx_start_failed": "Nginx 启动失败，已恢复原配置",
+      "installed": "CDN-XHTTP 安装完成：",
+      "purged": "CDN-XHTTP 配置、证书与站点文件已清理",
+      "port_fixed": "CDN-XHTTP 对外端口固定为 443，由 Nginx 管理"
     }
   },
   "bbr": {
@@ -278,6 +293,10 @@
       "allow_fail": "自动放行端口失败：",
       "manual_allow": "请手动放行端口后重试（示例：ufw allow <端口>/<协议> 或 firewall-cmd --permanent --add-port=<端口>/<协议> && firewall-cmd --reload）：",
       "all_pass": "SNI 必需端口检查通过"
+    },
+    "cdn_xhttp_ports": {
+      "start": "正在执行 CDN-XHTTP 必需端口检查（TCP 80/443）...",
+      "all_pass": "CDN-XHTTP 必需端口检查通过"
     },
     "uuid": {
       "check": "正在检查 UUID 类型：",
