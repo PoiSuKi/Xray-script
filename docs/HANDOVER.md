@@ -221,14 +221,16 @@ rules[]   [ {type:"field", ...}, {type:"field", ip:["geoip:private"], outboundTa
 ## 7. 验证方式（接手人怎么复现）
 
 ```powershell
-# 契约测试（43 条，纯源码文本断言；cwd 必须是项目根）
+# 契约测试（48 条，纯源码文本断言；cwd 必须是项目根）
 & "C:\Program Files\nodejs\node.exe" tests\installer-contract.test.js
 
 # 静态检查（0 error 是基线）
 & "...\work\tools\shellcheck\shellcheck.exe" -s bash -f gcc -S warning install.sh core\*.sh service\*.sh tool\*.sh
 ```
 
-当前基线：**测试 43/43 通过；shellcheck 0 error / 213 warning**（SC2155 182、SC2034 30、SC2124 1；按文件 handler 65、ssl 25、nginx 23、main 21、menu 15、share 15、docker 13、install 10、check 10、generate 7、read 7、traffic 2）。
+当前基线：**测试 48/48 通过；shellcheck 0 error / 213 warning**（SC2155 182、SC2034 30、SC2124 1；按文件 handler 65、ssl 25、nginx 23、main 21、menu 15、share 15、docker 13、install 10、check 10、generate 7、read 7、traffic 2）。
+
+实机验证（Debian 12 bookworm / bash 5.2）额外跑过：`for f in install.sh core/*.sh service/*.sh tool/*.sh; do bash -n "$f"; done` → 全部通过（本机沙箱跑不了 bash，这一项只能在 Linux 上做）。
 
 注意：
 
@@ -240,6 +242,8 @@ rules[]   [ {type:"field", ...}, {type:"field", ip:["geoip:private"], outboundTa
 
 ## 8. 已知问题清单（按优先级，含位置与建议）
 
+> **状态更新（v2026.11.25，提交 `0864a9c`）**：P1-1、P1-2、P1-3 与 P2-5 已修复，见第 9 节；下面保留原始描述作为问题来源记录，修复方式见条目末尾的"**已修**"标注。
+
 ### P1 — 会造成用户可见故障或状态丢失
 
 1. **`handler_web` 直写配置文件（`core/handler.sh:3090-3092`）**
@@ -249,12 +253,16 @@ rules[]   [ {type:"field", ...}, {type:"field", ip:["geoip:private"], outboundTa
    ```
    两个问题：`jq` 没有 `|| return 1`，一旦失败 `SCRIPT_CONFIG` 为空字符串，`>` 会把整个 `config.json` 截断成空文件；其次绕过 `persist_script_config`（无 `jq -e` 校验、无 `chmod 0600`、非原子 `mv`），`sleep 2` 也是历史遗留的盲目等待。
    **建议**：`SCRIPT_CONFIG="$(... | jq ...)" || return 1`，然后 `persist_script_config || return 1`，删掉 `sleep 2`。
+   **已修**：按建议改完，`sleep 2` 一并删除。
 
 2. **8 处 `persist_script_config` 未检查返回码**：`handler.sh:889, 1164, 1559, 1669, 1712, 1767, 1805, 2140`。磁盘满 / 权限异常时会静默继续，后续步骤基于"以为已保存"的状态执行。
    **建议**：统一改成 `persist_script_config || return 1`（注意：`handler_change_xray_port:1805` 处要保留"事务未提交"的语义，只加返回码检查）。
+   **已修**：8 处补齐守卫（`|| return 1` / `|| _error`）；另外 `handler_ca_server`、`handler_x25519_config`、`handler_warp` 三处残留的 `echo > file` 直写也改成了原子 helper。现在 `handler.sh` 里 19 处调用全部带守卫。
 
 3. **`handler_change_reality_domain` 非原子双写（`handler.sh:1855-1867`）**：用 `cat "${new_config}" >"${XRAY_CONFIG_PATH}"` 和 `echo ... >"${SCRIPT_CONFIG_PATH}"` 覆盖，中途崩溃会留下半截文件（有 `.bak` 兜底，但只在后续分支才用）。它**不在**第 1 层事务里。
    **建议**：改用 `write_xray_config` + `persist_script_config`（两者都已是"临时文件 + 校验 + mv"），再保留现有 restart 校验。
+   **已修**：整函数重写——两份配置先 `cp` 备份到 `${XRAY_CONFIG_PATH}.reality-domain.bak` / `${SCRIPT_CONFIG_PATH}.reality-domain.bak`，`jq -e` 判断是否 REALITY 配置、空域名早退，`validate_xray_config` → `write_xray_config`（内部 `xray -test` + 0640 + `root:xray`）→ `persist_script_config`，随后 `handler_restart` + `systemctl -q is-active xray` 失败即回滚两份配置并重启。
+
 
 4. **`handler_change_domain` 破坏 `.target` 映射（`handler.sh:2921-2924`）**：`del(.target[$key])`（key=`domain`）并把 `.xray.target/.serverNames` 覆写成新域名。SNI 场景语义正确，但从 SNI 切回 Vision/XHTTP 时，原来的"诱饵域名 → serverNames"条目已丢，只能重新生成。
    **建议**：切换回非 SNI 模式时若 `.target` 为空，自动补一条默认映射；或在文档/菜单里明确说明。
@@ -263,6 +271,7 @@ rules[]   [ {type:"field", ...}, {type:"field", ip:["geoip:private"], outboundTa
 
 5. **空域名校验已按输入类型分级，但仍有两条漏网**：当前 `exec_read`（`handler.sh:256-314`）对 `domain` 用 `--dns`（先 `valid_domain`，空值被拒）、对 `cdn` 用 `--required-domain`、`handler_change_domain` 自己还有 `-z` 兜底（`handler.sh:2876`）——**第 2 轮审计指出的"空 CDN 域名写出半成品站点"已修复**。剩下的缺口是 `target` 与 `reality-domain` 走 `--domain`（`check_domain_security` 默认 `required=n`，空值 `_pass`），而 `handler_change_reality_domain` 读入后没有 `-z` 检查，会把 `realitySettings.target` 写成 `":443"`；虽然 `validate_xray_config` 大概率拦下，但报错信息指向"配置非法"而不是"你没输入"。
    **建议**：`reality-domain` / `target` 也改成必填（或至少加 `-z` 早退）。
+   **已修**：两处都换成 `exec_check '--required-domain'`（非空 + 格式 + 解析 + 443 探测 + 3xx 重定向探测），失败留在原循环重新输入；`handler_change_reality_domain` 另加 `.handler.reality.required` 早退兜底，i18n 与 `read.target` / `read.reality_domain` 文案同步改成"必填"。
 
 6. **第 1 层事务跨越多个进程**：`--script-config` 开启、`--xray-config` 提交，中间失败依赖 `main.sh` 的 `exec_handler` 兜底回滚。改动 `core/main.sh` 的步骤顺序时必须同步考虑；`begin` 的"先恢复旧备份"语义也意味着**陈旧备份会静默覆盖用户后续的改动**。
    **建议**：给备份加时间戳/pid 元信息，恢复前打一行 `>&2` 提示。
@@ -302,7 +311,20 @@ rules[]   [ {type:"field", ...}, {type:"field", ip:["geoip:private"], outboundTa
 | 清理垃圾 | 删除未跟踪的 60 字节 `$null`（内容是一条走错重定向的 rg 报错），源目录里也有同样的残留 |
 | 归档审计 | 三轮审计报告 + 旧补丁 → `docs/reviews/`（见该目录） |
 | 文档 | 新增本文件 `docs/HANDOVER.md` |
-| **未做** | 没有改任何 `.sh`、`.json`、i18n 文案；43 条契约测试基线保持不变 |
+| ~~**未做**~~ | 第一轮只做迁移与归档，没有改任何 `.sh`、`.json`、i18n 文案（当时 43 条测试基线保持不变）；第二轮起开始改代码，见下表 |
+
+### 9.1 第二轮（v2026.11.25，提交 `0864a9c`）
+
+| 动作 | 细节 |
+| --- | --- |
+| 输入必填 | `exec_read` 的 `target` / `reality-domain` 改用 `--required-domain` |
+| 写盘原子化 | `core/main.sh::save_script_config`、`service/ssl.sh::write_script_config`、`install.sh::write_script_config` 三个 helper（临时文件 + `jq -e` + `chmod 0600` + `mv -f`）；替换 `processes_language`、CA 回退、`update_xray_script_files`、两处 `.path`、两处 `.language` 的直写 |
+| 守卫补齐 | `handler.sh` 内 19 处 `persist_script_config` 全部带返回码检查；`handler_web` / `handler_ca_server` / `handler_x25519_config` / `handler_warp` 的 `echo > file` 全部改为 helper |
+| REALITY 域名 | `handler_change_reality_domain` 重写为"备份 → 校验 → 原子替换 → 重启校验 → 回滚"，SNI 模式给出明确提示，端口用 `capture` 保留 |
+| 文案 | zh/en 各加 2 个 key、改 2 条文案、删 1 条无引用 key；两侧 key 集合 425 对齐 |
+| 版本 | `config.json` → `v2026.11.25`；中英 README changelog 第 14 条 |
+| 测试 | 新增 5 条契约测试（48 条全绿）：必填校验、原子 helper 全覆盖、REALITY 备份/回滚、版本与文档一致、i18n key 对齐 |
+| 实机验证 | Debian 12 干净靶机：`install.sh --check-deps` 依赖装通（`bind9-dnsutils` 在 bookworm 存在）→ 从 GitHub raw 引导安装 → `core/main.sh --vision` 端到端 → REALITY 域名（空/非法/合法三条路径）→ `--change-port` / `--routing` / `--share` / `--traffic` / `--bbr` / `--ca-server` / `--geodata-cron` 开关 / `--start` `--stop` / `--purge` / `install.sh --update` 自更新。全部通过，`bash -n` 全脚本通过 |
 
 `docs/reviews/` 内容：
 
@@ -317,12 +339,13 @@ rules[]   [ {type:"field", ...}, {type:"field", ip:["geoip:private"], outboundTa
 
 ## 10. 建议的后续路线（按性价比排序）
 
-1. **修 P1-1 / P1-2 / P1-3**：三个独立提交，每个都在 `tests/installer-contract.test.js` 加一条断言（例如 `assert(!/echo "\$\{SCRIPT_CONFIG\}" >/.test(handler))`），保持 43 → 46 条全绿。
-2. **补齐域名必填**（P2-5）：`reality-domain` / `target` 从 `--domain` 换成必填校验，补一条"空输入被拒"的测试。
+1. ~~**修 P1-1 / P1-2 / P1-3**~~：已在 `0864a9c` 完成（48 条测试全绿）。
+2. ~~**补齐域名必填**（P2-5）~~：已在 `0864a9c` 完成。
 3. **Cloudreve 加固**（P2-7）：钉镜像版本、`6888` 绑回环。
 4. **加 CI**（`.github/workflows/ci.yml`）：`shellcheck -S warning` + `node tests/installer-contract.test.js` + `bash -n`（runner 是 Linux，天然可跑）。
 5. **决定是否接入上游**：加 `upstream = zxcvos/Xray-script` 并定期 rebase；当前 fork 已经把 handler 改得面目全非，直接 merge 大概率冲突，建议"只 cherry-pick 明确修复"。
-6. **发版**：把 `config.json.version` 提到 `v2026.11.10`，README changelog 加第 14 条（对应上面 1–3 的修复）。
+6. ~~**发版**~~：`config.json.version` 已提到 `v2026.11.25`，中英 README changelog 第 14 条。
+7. **SNI / CDN-XHTTP 全链路仍未实机验证**：这两条路径需要真实域名 + 证书（acme HTTP-01 要 80/443 可达的域名）。当前只验证到"nginx 源码编译可跑、缺域名时按预期报错"，真实签发与分流仍需一台有域名的机器补测。
 
 ---
 
