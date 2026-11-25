@@ -1,0 +1,49 @@
+## Findings
+
+**1. Medium — Leaving CDN blank during SNI setup aborts the install with a broken `.conf`**
+
+The validator explicitly accepts an empty domain:
+
+- [check.sh](C:/Users/YuuDaChi/Documents/Codex/2026-11-05/https-github-com-zxcvos-xray-script/work/fork/core/check.sh:692) returns success for an empty CDN domain.
+- [handler.sh](C:/Users/YuuDaChi/Documents/Codex/2026-11-05/https-github-com-zxcvos-xray-script/work/fork/core/handler.sh:294) therefore stores an empty `CONFIG_DATA['cdn']`.
+- [handler.sh](C:/Users/YuuDaChi/Documents/Codex/2026-11-05/https-github-com-zxcvos-xray-script/work/fork/core/handler.sh:1441) calls `handler_change_domain 'cdn'` unconditionally.
+- With an empty domain, [handler.sh](C:/Users/YuuDaChi/Documents/Codex/2026-11-05/https-github-com-zxcvos-xray-script/work/fork/core/handler.sh:2509) builds `certs/` paths, [handler.sh](C:/Users/YuuDaChi/Documents/Codex/2026-11-05/https-github-com-zxcvos-xray-script/work/fork/core/handler.sh:2521) writes `sites-available/.conf`, and [handler.sh](C:/Users/YuuDaChi/Documents/Codex/2026-11-05/https-github-com-zxcvos-xray-script/work/fork/core/handler.sh:2529) attempts issuance, which [ssl.sh](C:/Users/YuuDaChi/Documents/Codex/2026-11-05/https-github-com-zxcvos-xray-script/work/fork/service/ssl.sh:288) rejects. The result is a half-written `.conf`/symlink and a failed SNI install. Either require a non-empty CDN in `check_domain_security` for `--cdn`, or skip the CDN branch when it is empty.
+
+**2. Medium — A lingering script-config transaction can silently roll back later changes**
+
+`handler_script_config` starts a transaction but never commits:
+
+- [handler.sh](C:/Users/YuuDaChi/Documents/Codex/2026-11-05/https-github-com-zxcvos-xray-script/work/fork/core/handler.sh:1004)
+- The commit only happens later inside `handler_xray_config`: [handler.sh](C:/Users/YuuDaChi/Documents/Codex/2026-11-05/https-github-com-zxcvos-xray-script/work/fork/core/handler.sh:1348)
+
+In the SNI path the sequence is `--script-config`, then `--nginx-install`, then `--xray-config` ([main.sh](C:/Users/YuuDaChi/Documents/Codex/2026-11-05/https-github-com-zxcvos-xray-script/work/fork/core/main.sh:182)). If the middle step fails, the `.bak` remains, and the next `begin_script_config_transaction` restores the pre-change config first ([handler.sh](C:/Users/YuuDaChi/Documents/Codex/2026-11-05/https-github-com-zxcvos-xray-script/work/fork/core/handler.sh:405)), discarding any unrelated state written in between. Add a failure-path rollback/commit so a failed multi-step install does not leave a delayed time bomb.
+
+**3. Low — Port change applies and restarts Xray twice**
+
+`handler_change_xray_port` already generates, validates, writes, and restarts Xray ([handler.sh](C:/Users/YuuDaChi/Documents/Codex/2026-11-05/https-github-com-zxcvos-xray-script/work/fork/core/handler.sh:1758)), then the dispatcher runs `handler_xray_config` and `handler_restart` again ([handler.sh](C:/Users/YuuDaChi/Documents/Codex/2026-11-05/https-github-com-zxcvos-xray-script/work/fork/core/handler.sh:2823)). This is redundant and causes two service restarts; the second config write also happens outside any transaction.
+
+**4. Low — Cloudreve v4 watchtower compose unpins PostgreSQL/Redis and omits restart policies**
+
+The base template pins `postgres:17` and sets `restart: unless-stopped` on both dependencies ([docker-compose.yaml](C:/Users/YuuDaChi/Documents/Codex/2026-11-05/https-github-com-zxcvos-xray-script/work/fork/config/cloudreve/v4/docker-compose.yaml:27)), but the watchtower variant uses `postgres:latest` and `redis:latest` with no `restart` on either ([docker-compose.watchtower.yaml](C:/Users/YuuDaChi/Documents/Codex/2026-11-05/https-github-com-zxcvos-xray-script/work/fork/config/cloudreve/v4/docker-compose.watchtower.yaml:24)). That contradicts the base file's own "pin to major version" comment and leaves the database free to take an unplanned major-version jump via watchtower.
+
+**5. Low — v4 base compose exposes `6888` tcp/udp on all interfaces**
+
+[v4 docker-compose.yaml](C:/Users/YuuDaChi/Documents/Codex/2026-11-05/https-github-com-zxcvos-xray-script/work/fork/config/cloudreve/v4/docker-compose.yaml:11) publishes `6888` publicly while `5212` is loopback-only, and the watchtower variant drops `6888` entirely. The test suite codifies this, so it appears intentional, but it is an externally reachable service surface worth confirming is actually required.
+
+## Verified
+
+- `node tests/installer-contract.test.js`: **38/38 pass**. `node --test tests/` could not run because the sandbox blocks Node's child-process spawn (`EPERM`); the direct run executes the full suite.
+- JSON: all 9 JSON files parse cleanly (`config.json`, 6 Xray templates, `i18n/en.json`, `i18n/zh.json`).
+- Shell: no `bash`/`sh -n` was available in the sandbox (the bundled git `sh.exe` fails at startup with a signal-pipe error), so shell syntax was reviewed manually; I found no unclosed constructs. YAML templates were inspected line-by-line and are structurally valid.
+
+## Residual Risks
+
+- Self-update and bootstrap tarballs are not checksum-verified (TLS only); the pinned Xray installer commit/SHA is correct and enforced in `fetch_xray_installer` and `tool/geodata.sh`.
+- `nginx.sh` discovers the OpenSSL version with `wget --no-check-certificate` ([nginx.sh](C:/Users/YuuDaChi/Documents/Codex/2026-11-05/https-github-com-zxcvos-xray-script/work/fork/service/nginx.sh:568)); the actual source tarball is still fetched with TLS verification.
+- `generate_uuid_from_string` is a local UUIDv5 fallback only used when `xray` is absent; parity with `xray uuid -i` is not tested offline.
+- The REALITY domain-only editor does not add the new domain to the `.target` map used by future random target selection.
+- `config/nginx/nginx.service` is a dead duplicate of the heredoc emitted by `nginx.sh`, so the two can drift.
+
+## Conclusion
+
+The tree is publishable. The pinned-installer rollback, runtime user/log permissions, config transactions on the happy path, mKCP FinalMask, XHTTP path normalization, share-link construction, staged ACME/Docker downloads, and Nginx update rollback all hold up under direct review, and the full Node suite passes. I would fix the empty-CDN path and tighten the lingering-transaction behavior before tagging a release; the remaining items are polish or consciously accepted risk.

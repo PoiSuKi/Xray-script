@@ -1,0 +1,21 @@
+**Findings**
+
+No new high- or medium-severity defects found in this working tree. The flagged fixes hold up under direct inspection. Remaining items, ordered by severity:
+
+1. **Low - unchecked `persist_script_config` calls.** [handler.sh](/C:/Users/YuuDaChi/Documents/Codex/2026-11-05/https-github-com-zxcvos-xray-script/work/fork/core/handler.sh:1758), [handler.sh](/C:/Users/YuuDaChi/Documents/Codex/2026-11-05/https-github-com-zxcvos-xray-script/work/fork/core/handler.sh:1147), [handler.sh](/C:/Users/YuuDaChi/Documents/Codex/2026-11-05/https-github-com-zxcvos-xray-script/work/fork/core/handler.sh:1724), [handler.sh](/C:/Users/YuuDaChi/Documents/Codex/2026-11-05/https-github-com-zxcvos-xray-script/work/fork/core/handler.sh:880). The port-change path is effectively covered because `handler_xray_config` re-persists with `|| return 1` in the same process, but a silent write failure in `handler_script_config` could mask a failed config write. Adding `|| return 1` would match the hardening already applied to the sibling call sites.
+
+2. **Low - `handler_change_reality_domain` stays outside the transaction.** [handler.sh](/C:/Users/YuuDaChi/Documents/Codex/2026-11-05/https-github-com-zxcvos-xray-script/work/fork/core/handler.sh:1761) still writes both configs non-atomically (`cat >`, `echo >`) and does not use `begin/persist/commit`. This diff only swapped in `validate_xray_config`; the behavior is pre-existing, so it is a cleanup opportunity rather than a new regression.
+
+3. **Info - installer pin is duplicated and unverifiable offline.** `XRAY_INSTALL_COMMIT`/`XRAY_INSTALL_SHA256` are copied verbatim in [handler.sh](/C:/Users/YuuDaChi/Documents/Codex/2026-11-05/https-github-com-zxcvos-xray-script/work/fork/core/handler.sh:76) and [geodata.sh](/C:/Users/YuuDaChi/Documents/Codex/2026-11-05/https-github-com-zxcvos-xray-script/work/fork/tool/geodata.sh:5). The contract test asserts the literal strings, not that the SHA matches the remote file. I could not fetch the raw file in this offline sandbox, so a one-time external re-check of the hash against commit `e42df6a` is advisable before tagging.
+
+4. **Info - SNI CDN is now mandatory.** Empty CDN is rejected both at input (`--required-domain`, [handler.sh](/C:/Users/YuuDaChi/Documents/Codex/2026-11-05/https-github-com-zxcvos-xray-script/work/fork/core/handler.sh:295)) and in `handler_change_domain` ([handler.sh](/C:/Users/YuuDaChi/Documents/Codex/2026-11-05/https-github-com-zxcvos-xray-script/work/fork/core/handler.sh:2509)). This closes a previously broken empty-CDN path (it used to produce a `.conf` and empty-domain cert request); it is a behavior change, not a defect.
+
+**Verified**
+
+- `node tests/installer-contract.test.js`: 39/39 pass.
+- All 9 JSON files parse (`i18n/*`, `config.json`, all `config/xray/*.json`).
+- `git diff --check`: clean except an advisory that `tests/installer-contract.test.js` will normalize LF to CRLF.
+- No conflict markers, no leftover `--no-check-certificate`, no `curl | sh` / `bash -c` download-execute in the hardened paths; the only remaining download-and-execute is `install.sh`'s own tarball self-update, which is unchanged in this diff.
+- Static-only shell review: `bash` is not installed here (WSL exists but has no distro), so I could not run `bash -n` or shellcheck. The `bash -s -- <args>` invocation used for the pinned installer is the correct pattern and keeps `$1=install`, matching the prior `bash -c ... @ ...` semantics.
+
+**Verdict: publish.** No new high-severity issue; the five targeted fix areas (empty SNI domains, transaction cleanup, port-change dispatch, Cloudreve Compose templates, pinned installer/SHA) are consistent and the contract test is green.
