@@ -221,14 +221,14 @@ rules[]   [ {type:"field", ...}, {type:"field", ip:["geoip:private"], outboundTa
 ## 7. 验证方式（接手人怎么复现）
 
 ```powershell
-# 契约测试（48 条，纯源码文本断言；cwd 必须是项目根）
+# 契约测试（50 条，纯源码文本断言；cwd 必须是项目根）
 & "C:\Program Files\nodejs\node.exe" tests\installer-contract.test.js
 
 # 静态检查（0 error 是基线）
 & "...\work\tools\shellcheck\shellcheck.exe" -s bash -f gcc -S warning install.sh core\*.sh service\*.sh tool\*.sh
 ```
 
-当前基线：**测试 48/48 通过；shellcheck 0 error / 213 warning**（SC2155 182、SC2034 30、SC2124 1；按文件 handler 65、ssl 25、nginx 23、main 21、menu 15、share 15、docker 13、install 10、check 10、generate 7、read 7、traffic 2）。
+当前基线：**测试 50/50 通过；shellcheck 0 error / 213 warning**（SC2155 182、SC2034 30、SC2124 1；按文件 handler 65、ssl 25、nginx 23、main 21、menu 15、share 15、docker 13、install 10、check 10、generate 7、read 7、traffic 2）。
 
 实机验证（Debian 12 bookworm / bash 5.2）额外跑过：`for f in install.sh core/*.sh service/*.sh tool/*.sh; do bash -n "$f"; done` → 全部通过（本机沙箱跑不了 bash，这一项只能在 Linux 上做）。
 
@@ -325,6 +325,25 @@ rules[]   [ {type:"field", ...}, {type:"field", ip:["geoip:private"], outboundTa
 | 版本 | `config.json` → `v2026.11.25`；中英 README changelog 第 14 条 |
 | 测试 | 新增 5 条契约测试（48 条全绿）：必填校验、原子 helper 全覆盖、REALITY 备份/回滚、版本与文档一致、i18n key 对齐 |
 | 实机验证 | Debian 12 干净靶机：`install.sh --check-deps` 依赖装通（`bind9-dnsutils` 在 bookworm 存在）→ 从 GitHub raw 引导安装 → `core/main.sh --vision` 端到端 → REALITY 域名（空/非法/合法三条路径）→ `--change-port` / `--routing` / `--share` / `--traffic` / `--bbr` / `--ca-server` / `--geodata-cron` 开关 / `--start` `--stop` / `--purge` / `install.sh --update` 自更新。全部通过，`bash -n` 全脚本通过 |
+
+### 9.2 第三轮：nginx + acme.sh 路径（提交 `5e1828e` 及之后）
+
+在 Debian 12 上实跑 `core/handler.sh --nginx-install`（nginx 源码编译 + Brotli/GeoIP）暴露两个问题：
+
+1. **acme.sh 在"没有 CA 邮箱"时安装必然失败（已修，`5e1828e`）**
+   `handler_ssl_install` 用 `--email=${CA_EMAIL}` 调用 `ssl.sh --install`，纯 nginx 安装时 `.nginx.ca` 还是空值，于是 `install_acme_sh` 把 `email=`（值空）传给 `get.acme.sh`。安装器内部在 `./acme.sh` 第 9889 行以
+   ```
+   ./acme.sh: 9889: shift: can't shift that many
+   Install error
+   ```
+   失败，**但退出码仍是 0**，所以 `|| print_error` 不触发；随后第 270 行执行不存在的 `~/.acme.sh/acme.sh` 才报错退出，把 `handler_nginx_install` 卡在"编译完成、配置还没写、版本没记、服务没配"的半成品状态。
+   修法：`ACCOUNT_EMAIL` 非空才拼 `email=` 参数；安装后强制校验 `~/.acme.sh/acme.sh` 可执行（新增 i18n `.ssl.install.fail_verify`）。
+   已在靶机验证：`rm -rf ~/.acme.sh && bash service/ssl.sh --install --email= --ca=zerossl` → `Install success!`，随后完整 `--nginx-install` 一次跑通（nginx 1.31.10、`.nginx.version=1.31.10`、`nginx -t` ok、acme.sh 就位）。
+
+2. **`--purge` 残留运行期目录（已修）**
+   卸载后 `/run/xray-script` 及其 `xray/`、`nginx/` 子目录留着空壳。现在 `handler_purge` 结束前会 `rm -rf "${XRAY_RUNTIME_DIR}"`，并在 nginx 未运行时一并清掉 `${NGINX_RUNTIME_DIR}`，最后 `rmdir --ignore-fail-on-non-empty /run/xray-script`。靶机验证：purge 后目录消失、xray 停止；再 `core/main.sh --vision` 重装成功、443 正常监听。
+
+附带确认（不是脚本 bug，但容易误判）：Xray 以 `0.0.0.0:443` 运行时，再启动 nginx 会 `bind() to 0.0.0.0:443 failed (98: Address already in use)` —— 这是模式冲突，SNI/CDN-XHTTP 模式会把 Xray 改成 UDS 监听来让出 443，非 SNI 模式下 nginx 起不来属预期。
 
 `docs/reviews/` 内容：
 

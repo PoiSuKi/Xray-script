@@ -2147,6 +2147,14 @@ function handler_purge() {
     SCRIPT_CONFIG="$(reset_json_fields "${SCRIPT_CONFIG}" 'xray')" || return 1
     # 将重置后的脚本配置写入文件
     persist_script_config || return 1
+
+    # 卸载后清理运行期目录（tmpfiles 会在下次安装时重建），
+    # 否则 /run/xray-script 会作为空目录残留；nginx 仍在跑时保留它自己的 socket 目录。
+    rm -rf -- "${XRAY_RUNTIME_DIR}" || true
+    if ! systemctl -q is-active nginx; then
+        rm -rf -- "${NGINX_RUNTIME_DIR}" || true
+    fi
+    rmdir --ignore-fail-on-non-empty /run/xray-script 2>/dev/null || true
 }
 
 # =============================================================================

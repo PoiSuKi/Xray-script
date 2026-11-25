@@ -821,3 +821,14 @@ test("acme.sh install survives an empty account email", () => {
   }
 });
 
+test("purge removes the runtime socket directory", () => {
+  const handler = read("core/handler.sh");
+  const purge = handler.slice(handler.indexOf("function handler_purge()"));
+  const body = purge.slice(0, purge.indexOf("\nfunction handler_start()"));
+
+  assert.match(body, /rm -rf -- "\$\{XRAY_RUNTIME_DIR\}"/);
+  // nginx 仍在运行时不能顺手删掉它的 socket 目录
+  assert.match(body, /if ! systemctl -q is-active nginx; then\s*\n\s*rm -rf -- "\$\{NGINX_RUNTIME_DIR\}"/);
+});
+
+
