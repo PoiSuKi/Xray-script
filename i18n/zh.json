@@ -169,6 +169,7 @@
     "reality": {
       "read_failed": "读取当前 Xray 配置失败",
       "not_configured": "当前配置不包含 REALITY 入站",
+      "required": "REALITY 域名不能为空，请输入有效域名",
       "backup_failed": "备份当前配置失败",
       "update_failed": "更新 REALITY 域名失败",
       "invalid_config": "新的 Xray 配置校验失败，未应用修改",
@@ -240,8 +241,8 @@
     "fallback": "请输入 Fallback UUID (支持自定义字符串，默认自动生成): ",
     "seed": "请输入 seed (默认自动生成): ",
     "password": "请输入 password (默认自动生成): ",
-    "target": "请输入目标域名 target (默认随机选择): ",
-    "reality_domain": "请输入新的 REALITY 域名: ",
+    "target": "请输入目标域名 target (必填，需支持 TLS 1.3，例如 www.microsoft.com): ",
+    "reality_domain": "请输入新的 REALITY 域名 (必填，需支持 TLS 1.3): ",
     "only_change_domain": "仅更新域名 [Y/n]: ",
     "domain": "请输入网站域名 (供 Reality 使用): ",
     "cdn": "请输入网站域名 (供 CDN 使用): ",

@@ -707,3 +707,98 @@ test("failed multi-step handlers roll back pending script transactions", () => {
   );
   assert.match(handler, /--rollback-script-config\) rollback_script_config_transaction/);
 });
+
+test("REALITY target and domain inputs require a validated domain", () => {
+  const handler = read("core/handler.sh");
+  const zh = JSON.parse(read("i18n/zh.json"));
+  const en = JSON.parse(read("i18n/en.json"));
+
+  assert.match(
+    handler,
+    /target\)[\s\S]{0,220}exec_check '--required-domain' "\$\{result\}" \|\| continue/,
+  );
+  assert.match(
+    handler,
+    /reality-domain\)[\s\S]{0,220}exec_check '--required-domain' "\$\{result\}" \|\| continue/,
+  );
+  assert.ok(zh.handler.reality.required.length > 0);
+  assert.ok(en.handler.reality.required.length > 0);
+  assert.match(zh.read.target, /必填/);
+  assert.match(en.read.target, /required/);
+});
+
+test("every script config write goes through the atomic helper", () => {
+  const handler = read("core/handler.sh");
+  const persist = functionBody(handler, "persist_script_config");
+
+  assert.match(persist, /mv -f "\$\{temp_path\}" "\$\{SCRIPT_CONFIG_PATH\}"/);
+  // 唯一允许的直接覆盖是 REALITY 域名回滚时还原上一份已验证配置
+  const directWrites = handler.match(/[^\n]*>"\$\{SCRIPT_CONFIG_PATH\}"/g) || [];
+  assert.equal(directWrites.length, 1, `unexpected direct config writes: ${directWrites}`);
+  assert.match(directWrites[0], /cat "\$\{script_backup\}"/);
+
+  const calls = handler
+    .split("\n")
+    .filter((line) => /persist_script_config/.test(line))
+    .filter((line) => !/function persist_script_config/.test(line));
+  assert.ok(calls.length >= 19);
+  for (const line of calls) {
+    assert.match(
+      line,
+      /(?:if !\s*persist_script_config|\|\|\s*(?:return 1|_error)|^\s*!\s*persist_script_config)/,
+      `unguarded persist_script_config call: ${line.trim()}`,
+    );
+  }
+
+  // 其他脚本各自的原子写入helper，以及不再存在的直接重定向
+  const others = [
+    ["core/main.sh", "save_script_config"],
+    ["service/ssl.sh", "write_script_config"],
+    ["install.sh", "write_script_config"],
+  ];
+  for (const [name, helper] of others) {
+    const source = read(name);
+    assert.match(source, new RegExp(`function ${helper}\\(\\)`), `${name} missing ${helper}`);
+    assert.doesNotMatch(
+      source,
+      /echo "\$\{SCRIPT_CONFIG\}" >"\$\{SCRIPT_CONFIG_PATH\}"/,
+      `${name} still writes the config through a shell redirect`,
+    );
+    assert.doesNotMatch(source, /sleep 2\n\s*\$/, `${name} still sleeps after a config write`);
+  }
+});
+
+test("REALITY domain edits back up, validate, replace atomically and roll back", () => {
+  const body = functionBody(read("core/handler.sh"), "handler_change_reality_domain");
+
+  assert.match(body, /cp -p "\$\{XRAY_CONFIG_PATH\}" "\$\{config_backup\}"/);
+  assert.match(body, /cp -p "\$\{SCRIPT_CONFIG_PATH\}" "\$\{script_backup\}"/);
+  assert.match(body, /validate_xray_config "\$\{new_config\}"/);
+  assert.match(body, /write_xray_config "\$\(cat "\$\{new_config\}"\)"/);
+  assert.match(body, /persist_script_config/);
+  assert.match(body, /restore_reality_domain_state/);
+  assert.match(body, /systemctl -q is-active xray/);
+});
+
+test("script version follows the release date and documentation", () => {
+  const config = JSON.parse(read("config.json"));
+  const zh = read("README.md");
+  const en = read(".github/README.en.md");
+
+  assert.match(config.version, /^v\d{4}\.\d{2}\.\d{2}(?:-r\d+)?$/);
+  assert.ok(zh.includes(config.version));
+  assert.ok(en.includes(config.version));
+});
+
+test("Chinese and English i18n key sets stay in sync", () => {
+  const flatten = (value, prefix = "") =>
+    Object.entries(value).flatMap(([key, child]) =>
+      child && typeof child === "object" ? flatten(child, `${prefix}${key}.`) : [`${prefix}${key}`],
+    );
+  const zh = new Set(flatten(JSON.parse(read("i18n/zh.json"))));
+  const en = new Set(flatten(JSON.parse(read("i18n/en.json"))));
+
+  assert.deepEqual([...zh].filter((key) => !en.has(key)), []);
+  assert.deepEqual([...en].filter((key) => !zh.has(key)), []);
+  assert.ok(zh.size > 400);
+});

@@ -283,12 +283,12 @@ function exec_read() {
             exec_check '--password' "${result}" || continue
             ;;
         target)
-            # 验证目标域名
-            exec_check '--domain' "${result}" || continue
+            # 验证目标域名 (必填：空输入会导致 REALITY target 生成为 ":443")
+            exec_check '--required-domain' "${result}" || continue
             ;;
         reality-domain)
-            # 验证 REALITY 域名
-            exec_check '--domain' "${result}" || continue
+            # 验证 REALITY 域名 (必填：空输入会写出非法 target)
+            exec_check '--required-domain' "${result}" || continue
             ;;
         only-change-domain)
             # 为仅更新域名选项设置默认值 'Y'
@@ -886,7 +886,7 @@ function handler_reset_script_config() {
     esac
     [[ "${persist_result}" == 'n' ]] && return 0
     # 将重置后的脚本配置写入文件
-    persist_script_config
+    persist_script_config || return 1
 }
 
 function handler_ca_server() {
@@ -936,8 +936,9 @@ function handler_ca_server() {
         _error "ca switch failed, rolled back to ${current_ca_server}"
     done
 
-    SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --arg caServer "${target_ca_server,,}" '.nginx.ca_server = $caServer')"
-    echo "${SCRIPT_CONFIG}" >"${SCRIPT_CONFIG_PATH}" && sleep 2
+    SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --arg caServer "${target_ca_server,,}" '.nginx.ca_server = $caServer')" || _error "failed to build ca server config"
+    # 原子写入：临时文件 + jq 校验 + chmod 0600 + mv，避免中途失败截断配置
+    persist_script_config || _error "failed to persist ca server"
     if [[ -x "${ACME_PATH}" ]]; then
         exec_ssl '--set-ca' "--ca=${target_ca_server}" || _error "failed to set acme default ca"
     fi
@@ -1161,7 +1162,7 @@ function handler_script_config() {
     SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --arg tag "${CONFIG_TAG}" '.xray.tag = $tag')" || return 1
     SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --argjson port "${XRAY_PORT}" '.xray.port = $port')" || return 1
     # 将更新后的脚本配置写入文件
-    persist_script_config
+    persist_script_config || return 1
 }
 
 # =============================================================================
@@ -1195,8 +1196,8 @@ function handler_x25519_config() {
     SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --arg privateKey "${PRIVATE_KEY}" '.xray.privateKey = $privateKey')"
     SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --arg publicKey "${PUBLIC_KEY}" '.xray.publicKey = $publicKey')"
     SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --arg hash32 "${HASH32}" '.xray.hash32 = $hash32')"
-    # 将更新后的脚本配置写入文件
-    echo "${SCRIPT_CONFIG}" >"${SCRIPT_CONFIG_PATH}" && sleep 2
+    # 将更新后的脚本配置原子写入文件
+    persist_script_config || return 1
 }
 
 # =============================================================================
@@ -1556,7 +1557,7 @@ function handler_custom_site_add() {
 
     rm -f "${stream_backup}"
     SCRIPT_CONFIG="${updated_script_config}"
-    persist_script_config
+    persist_script_config || return 1
     echo -e "${GREEN}[$(echo "$I18N_DATA" | jq -r '.title.info')]${NC} $(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.custom_sites.added")${domain}" >&2
 }
 
@@ -1666,7 +1667,7 @@ function handler_custom_site_update() {
 
     rm -f "${old_conf_backup}" "${stream_backup}"
     SCRIPT_CONFIG="${updated_script_config}"
-    persist_script_config
+    persist_script_config || return 1
     echo -e "${GREEN}[$(echo "$I18N_DATA" | jq -r '.title.info')]${NC} $(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.custom_sites.updated")${new_domain}" >&2
 }
 
@@ -1709,7 +1710,7 @@ function handler_custom_site_delete() {
 
     rm -f "${conf_backup}" "${stream_backup}"
     SCRIPT_CONFIG="${updated_script_config}"
-    persist_script_config
+    persist_script_config || return 1
     exec_ssl '--stop-renew' "--domain=${domain}" || true
     echo -e "${GREEN}[$(echo "$I18N_DATA" | jq -r '.title.info')]${NC} $(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.custom_sites.deleted")${domain}" >&2
 }
@@ -1764,7 +1765,7 @@ function handler_xray_version() {
     # 更新脚本配置中的 Xray 版本
     SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --arg xray "${CONFIG_DATA['version']}" '.xray.version = $xray')" || return 1
     # 将更新后的脚本配置写入文件
-    persist_script_config
+    persist_script_config || return 1
 }
 
 # =============================================================================
@@ -1802,7 +1803,7 @@ function handler_change_xray_port() {
     # 更新脚本配置中的 Xray 端口
     SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --argjson port "${XRAY_PORT}" '.xray.port = $port')" || return 1
     # 运行配置和重启由主流程继续处理，成功后再提交整个事务。
-    persist_script_config
+    persist_script_config || return 1
 }
 
 function handler_change_reality_domain() {
@@ -1813,6 +1814,13 @@ function handler_change_reality_domain() {
     local new_config="${XRAY_CONFIG_PATH}.reality-domain.tmp"
     local config_backup="${XRAY_CONFIG_PATH}.reality-domain.bak"
     local script_backup="${SCRIPT_CONFIG_PATH}.reality-domain.bak"
+
+    # 回滚：两份备份都是"上一份已验证可用"的状态，覆盖回去即可
+    restore_reality_domain_state() {
+        cat "${config_backup}" >"${XRAY_CONFIG_PATH}" 2>/dev/null || true
+        cat "${script_backup}" >"${SCRIPT_CONFIG_PATH}" 2>/dev/null || true
+        SCRIPT_CONFIG="${old_script_config}"
+    }
 
     config_tag="$(echo "${SCRIPT_CONFIG}" | jq -r '.xray.tag // empty')"
     if [[ "${config_tag,,}" == 'sni' ]]; then
@@ -1827,6 +1835,10 @@ function handler_change_reality_domain() {
     old_domain="$(echo "${SCRIPT_CONFIG}" | jq -r '.xray.target // empty')"
     exec_read 'reality-domain'
     new_domain="${CONFIG_DATA['reality-domain']}"
+    # 空输入已由 exec_read 的 --required-domain 拦截，这里再兜一层，避免写出非法 target
+    if [[ -z "${new_domain}" ]]; then
+        _error "$(echo "$I18N_DATA" | jq -r '.handler.reality.required')"
+    fi
 
     cp -p "${XRAY_CONFIG_PATH}" "${config_backup}" || _error "$(echo "$I18N_DATA" | jq -r '.handler.reality.backup_failed')"
     cp -p "${SCRIPT_CONFIG_PATH}" "${script_backup}" || _error "$(echo "$I18N_DATA" | jq -r '.handler.reality.backup_failed')"
@@ -1852,15 +1864,14 @@ function handler_change_reality_domain() {
         _error "$(echo "$I18N_DATA" | jq -r '.handler.reality.invalid_config')"
     fi
 
-    if ! cat "${new_config}" >"${XRAY_CONFIG_PATH}"; then
+    # 原子替换：write_xray_config 会再校验一次 jq / xray -test，并 chmod 0640、chown root:xray、mv
+    if ! write_xray_config "$(cat "${new_config}")"; then
         rm -f "${new_config}" "${config_backup}" "${script_backup}"
         _error "$(echo "$I18N_DATA" | jq -r '.handler.reality.update_failed')"
     fi
     if ! SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --arg target "${new_domain}" --arg serverName "${new_domain}" '.xray.target = $target | .xray.serverNames = [$serverName]')" ||
-        ! echo "${SCRIPT_CONFIG}" >"${SCRIPT_CONFIG_PATH}"; then
-        cat "${config_backup}" >"${XRAY_CONFIG_PATH}"
-        cat "${script_backup}" >"${SCRIPT_CONFIG_PATH}"
-        SCRIPT_CONFIG="${old_script_config}"
+        ! persist_script_config; then
+        restore_reality_domain_state
         handler_restart || true
         rm -f "${new_config}" "${config_backup}" "${script_backup}"
         _error "$(echo "$I18N_DATA" | jq -r '.handler.reality.update_failed')"
@@ -1868,9 +1879,7 @@ function handler_change_reality_domain() {
 
     handler_restart || true
     if ! systemctl -q is-active xray; then
-        cat "${config_backup}" >"${XRAY_CONFIG_PATH}"
-        cat "${script_backup}" >"${SCRIPT_CONFIG_PATH}"
-        SCRIPT_CONFIG="${old_script_config}"
+        restore_reality_domain_state
         handler_restart || true
         rm -f "${new_config}" "${config_backup}" "${script_backup}"
         _error "$(echo "$I18N_DATA" | jq -r '.handler.reality.restart_failed')"
@@ -2137,7 +2146,7 @@ function handler_purge() {
     # 重置 xray 字段
     SCRIPT_CONFIG="$(reset_json_fields "${SCRIPT_CONFIG}" 'xray')" || return 1
     # 将重置后的脚本配置写入文件
-    persist_script_config
+    persist_script_config || return 1
 }
 
 # =============================================================================
@@ -2328,8 +2337,8 @@ function handler_warp() {
     fi
     # 更新脚本配置中的 WARP 状态
     SCRIPT_CONFIG=$(echo "${SCRIPT_CONFIG}" | jq --arg warp "${WARP_STATUS}" '.xray.warp = $warp')
-    # 将更新后的脚本配置和 Xray 配置写入文件
-    echo "${SCRIPT_CONFIG}" >"${SCRIPT_CONFIG_PATH}" && sleep 2
+    # 将更新后的脚本配置和 Xray 配置原子写入文件
+    persist_script_config || return 1
     write_xray_config || return 1
 }
 
@@ -3087,9 +3096,9 @@ function handler_web() {
     handler_nginx_restart
     handler_restart
     # 更新脚本配置中的 Web 类型
-    SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --arg web "${web}" '.nginx.web = $web')"
-    # 将更新后的脚本配置写入文件
-    echo "${SCRIPT_CONFIG}" >"${SCRIPT_CONFIG_PATH}" && sleep 2
+    SCRIPT_CONFIG="$(echo "${SCRIPT_CONFIG}" | jq --arg web "${web}" '.nginx.web = $web')" || return 1
+    # 将更新后的脚本配置写入文件（原子写入 + 校验 + 0600；直接重定向会在 jq 失败时截断整个配置）
+    persist_script_config || return 1
 }
 
 # =============================================================================

@@ -106,6 +106,36 @@ function _error() {
 }
 
 # =============================================================================
+# 函数名称: save_script_config
+# 功能描述: 将全局变量 SCRIPT_CONFIG 原子写入脚本配置文件。
+#           写入流程：临时文件 -> jq 校验 -> 权限 0600 -> mv 覆盖。
+#           直接重定向 (echo > file) 在 jq 失败或磁盘异常时会截断已有配置。
+# 参数: 无
+# 返回值: 0 = 写入成功，1 = 写入失败
+# =============================================================================
+
+function save_script_config() {
+    local temp_path="${SCRIPT_CONFIG_PATH}.tmp.$$"
+
+    printf '%s\n' "${SCRIPT_CONFIG}" >"${temp_path}" || {
+        rm -f "${temp_path}"
+        return 1
+    }
+    if ! jq -e . "${temp_path}" >/dev/null 2>&1; then
+        rm -f "${temp_path}"
+        return 1
+    fi
+    chmod 0600 "${temp_path}" || {
+        rm -f "${temp_path}"
+        return 1
+    }
+    if ! mv -f "${temp_path}" "${SCRIPT_CONFIG_PATH}"; then
+        rm -f "${temp_path}"
+        return 1
+    fi
+}
+
+# =============================================================================
 # 函数名称: exec_menu
 # 功能描述: 执行菜单脚本 (menu.sh)，并将菜单脚本的退出码作为返回值。
 # 参数:
@@ -421,8 +451,9 @@ function processes_language() {
     *) LANG_PARAM="zh" ;; # 默认中文
     esac
     # 更新配置文件中的语言设置
-    SCRIPT_CONFIG="$(jq --arg language "${LANG_PARAM}" '.language = $language' "${SCRIPT_CONFIG_PATH}")"
-    echo "${SCRIPT_CONFIG}" >"${SCRIPT_CONFIG_PATH}" && sleep 2
+    SCRIPT_CONFIG="$(jq --arg language "${LANG_PARAM}" '.language = $language' "${SCRIPT_CONFIG_PATH}")" || _error "failed to update language"
+    # 原子写入，避免直接重定向截断配置
+    save_script_config || _error "failed to persist language"
     bash "${CUR_DIR}/${CUR_FILE}.sh" && exit 0
 }
 

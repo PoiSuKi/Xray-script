@@ -69,6 +69,7 @@
 11. v2026.11.08-r1 fixes UUID generation and validation, installer/update rollback, mKCP FinalMask, XHTTP path boundaries, and REALITY log ownership; restricts the Cloudreve management port to localhost and hardens the ACME, Docker installer, and Cloudreve update failure paths.
 12. v2026.11.09 adds CDN-XHTTP: Nginx terminates TLS, serves a static decoy site, and forwards the secret path to Xray XHTTP `packet-up` over a Unix socket. acme.sh HTTP-01 webroot issuance replaces the Cloudflare API Token dependency, and mode switching plus uninstall cleanup are included.
 13. v2026.11.09-r1 fixes CDN-XHTTP decoy-site installation on fresh systems where the `/var/www` parent directory does not yet exist.
+14. v2026.11.25 hardens three configuration writes: the REALITY domain and target are now required and validated as a real domain with port and redirect probes, so an invalid `:443` target can no longer be written; every `config.json` write uses the atomic helper and propagates failures instead of dropping them silently; changing the REALITY domain now backs up both files, validates with `xray -test`, replaces atomically, verifies the service after restart and rolls back on any failure.
 
 ## Share Links
 

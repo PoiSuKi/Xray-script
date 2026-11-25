@@ -139,6 +139,39 @@ function print_error() {
 }
 
 # =============================================================================
+# 函数名称: write_script_config
+# 功能描述: 原子写入脚本配置文件：临时文件 -> jq 校验 -> 权限 0600 -> mv 覆盖。
+#           直接重定向 (echo > file) 在 jq 失败或磁盘异常时会截断已有配置。
+# 参数:
+#   $1: 完整的配置 JSON 文本
+# 返回值: 0 = 写入成功，1 = 写入失败
+# =============================================================================
+function write_script_config() {
+    local content="${1:-}"
+    local temp_path="${SCRIPT_CONFIG_PATH}.tmp.$$"
+
+    if [[ -z "${content}" ]]; then
+        return 1
+    fi
+    printf '%s\n' "${content}" >"${temp_path}" || {
+        rm -f "${temp_path}"
+        return 1
+    }
+    if ! jq -e . "${temp_path}" >/dev/null 2>&1; then
+        rm -f "${temp_path}"
+        return 1
+    fi
+    chmod 0600 "${temp_path}" || {
+        rm -f "${temp_path}"
+        return 1
+    }
+    if ! mv -f "${temp_path}" "${SCRIPT_CONFIG_PATH}"; then
+        rm -f "${temp_path}"
+        return 1
+    fi
+}
+
+# =============================================================================
 # 函数名称: normalize_ca_server
 # 功能描述: 规范化 CA 参数，仅允许 zerossl / letsencrypt，非法值回落 zerossl。
 # 参数:
@@ -401,7 +434,8 @@ EOF
                 print_warn "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.issue.zerossl_pending_switch")"
                 CA_SERVER='letsencrypt'
                 local new_script_config="$(jq --arg caServer "${CA_SERVER}" '.nginx.ca_server = $caServer' "${SCRIPT_CONFIG_PATH}")"
-                echo "${new_script_config}" >"${SCRIPT_CONFIG_PATH}" && sleep 2
+                # 原子写入，避免直接重定向截断配置
+                write_script_config "${new_script_config}" || print_error "failed to persist ca server"
 
                 issue_args=(
                     --issue -d "${DOMAIN}"

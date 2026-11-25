@@ -460,8 +460,40 @@ function update_xray_script_files() {
 
     local updated_config
     updated_config="$(jq --arg version "${remote_version}" '.version = $version' "${SCRIPT_CONFIG_PATH}")" || return 1
-    echo "${updated_config}" >"${SCRIPT_CONFIG_PATH}" && sleep 1
+    write_script_config "${updated_config}" || return 1
     echo -e "${GREEN}[${I18N_DATA['tip']}]${NC} ${I18N_DATA['completed']}"
+}
+
+# =============================================================================
+# 功能描述: 原子写入脚本配置文件：临时文件 -> jq 校验 -> 权限 0600 -> mv 覆盖。
+#           直接重定向 (echo > file) 在 jq 失败或磁盘异常时会截断已有配置。
+# 参数:
+#   $1: 完整的配置 JSON 文本
+# 返回值: 0 = 写入成功，1 = 写入失败
+# =============================================================================
+function write_script_config() {
+    local content="${1:-}"
+    local temp_path="${SCRIPT_CONFIG_PATH}.tmp.$$"
+
+    if [[ -z "${content}" ]]; then
+        return 1
+    fi
+    printf '%s\n' "${content}" >"${temp_path}" || {
+        rm -f "${temp_path}"
+        return 1
+    }
+    if ! jq -e . "${temp_path}" >/dev/null 2>&1; then
+        rm -f "${temp_path}"
+        return 1
+    fi
+    chmod 0600 "${temp_path}" || {
+        rm -f "${temp_path}"
+        return 1
+    }
+    if ! mv -f "${temp_path}" "${SCRIPT_CONFIG_PATH}"; then
+        rm -f "${temp_path}"
+        return 1
+    fi
 }
 
 function check_xray_script_version() {
@@ -586,7 +618,7 @@ function main() {
         PROJECT_ROOT='/usr/local/xray-script' # 设置默认项目根目录
         # 将默认路径更新到脚本配置文件中
         SCRIPT_CONFIG="$(jq --arg path "${PROJECT_ROOT}" '.path = $path' "${SCRIPT_CONFIG_PATH}")"
-        echo "${SCRIPT_CONFIG}" >"${SCRIPT_CONFIG_PATH}" && sleep 2
+        write_script_config "${SCRIPT_CONFIG}" || _error "${I18N_DATA['failed']}: config.json"
     # 如果配置文件中已有记录的路径，则使用该路径
     elif [[ -n "${script_path}" ]]; then
         PROJECT_ROOT="${script_path}"
@@ -594,7 +626,7 @@ function main() {
     elif [[ -n "${PROJECT_ROOT}" ]]; then
         # 将命令行指定的路径更新到脚本配置文件中
         SCRIPT_CONFIG="$(jq --arg path "${PROJECT_ROOT}" '.path = $path' "${SCRIPT_CONFIG_PATH}")"
-        echo "${SCRIPT_CONFIG}" >"${SCRIPT_CONFIG_PATH}" && sleep 2
+        write_script_config "${SCRIPT_CONFIG}" || _error "${I18N_DATA['failed']}: config.json"
     fi
 
     # 设置各个子目录的路径
@@ -626,11 +658,11 @@ function main() {
         esac
         # 更新配置文件中的语言设置
         SCRIPT_CONFIG="$(jq --arg language "${LANG_PARAM}" '.language = $language' "${SCRIPT_CONFIG_PATH}")"
-        echo "${SCRIPT_CONFIG}" >"${SCRIPT_CONFIG_PATH}" && sleep 2
+        write_script_config "${SCRIPT_CONFIG}" || _error "${I18N_DATA['failed']}: config.json"
     elif [[ "${LANG_PARAM}" =~ ^--lang= ]]; then
         # 如果通过命令行指定了语言，则更新配置文件
         SCRIPT_CONFIG="$(jq --arg language "${LANG_PARAM#*=}" '.language = $language' "${SCRIPT_CONFIG_PATH}")"
-        echo "${SCRIPT_CONFIG}" >"${SCRIPT_CONFIG_PATH}" && sleep 2
+        write_script_config "${SCRIPT_CONFIG}" || _error "${I18N_DATA['failed']}: config.json"
     fi
 
     # 启动主脚本，并传递快速安装选项
