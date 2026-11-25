@@ -233,6 +233,7 @@ function set_default_ca() {
 # =============================================================================
 function install_acme_sh() {
     local installer_file=''
+    local -a installer_args=()
 
     # 检查 acme.sh 是否已经安装
     if [[ -e "${HOME}/.acme.sh/acme.sh" ]]; then
@@ -257,7 +258,13 @@ function install_acme_sh() {
         print_error "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.install.fail_download")"
     fi
 
-    sh "${installer_file}" email="${ACCOUNT_EMAIL}" ||
+    # 邮箱为空时不要传 email=：get.acme.sh 收到空值会在安装器内部
+    # 以 "shift: can't shift that many" 失败，并且退出码仍是 0。
+    if [[ -n "${ACCOUNT_EMAIL}" ]]; then
+        installer_args+=("email=${ACCOUNT_EMAIL}")
+    fi
+
+    sh "${installer_file}" "${installer_args[@]}" ||
         {
             rm -f -- "${installer_file}"
             trap - EXIT
@@ -265,6 +272,11 @@ function install_acme_sh() {
         }
     rm -f -- "${installer_file}"
     trap - EXIT
+
+    # 安装器失败时同样返回 0，必须验证 acme.sh 真的落地了
+    if [[ ! -x "${HOME}/.acme.sh/acme.sh" ]]; then
+        print_error "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.install.fail_verify")"
+    fi
 
     # 启用 acme.sh 的自动升级功能
     "${HOME}/.acme.sh/acme.sh" --upgrade --auto-upgrade || print_error "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.install.fail_autoupgrade")"

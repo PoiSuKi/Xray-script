@@ -802,3 +802,22 @@ test("Chinese and English i18n key sets stay in sync", () => {
   assert.deepEqual([...en].filter((key) => !zh.has(key)), []);
   assert.ok(zh.size > 400);
 });
+
+test("acme.sh install survives an empty account email", () => {
+  const ssl = read("service/ssl.sh");
+
+  // get.acme.sh 收到空的 email= 会在安装器内部失败，且退出码仍为 0
+  assert.ok(!/sh "\$\{installer_file\}" email=/.test(ssl));
+  assert.match(ssl, /local -a installer_args=\(\)/);
+  assert.match(ssl, /if \[\[ -n "\$\{ACCOUNT_EMAIL\}" \]\]; then\s*\n\s*installer_args\+=\("email=\$\{ACCOUNT_EMAIL\}"\)/);
+  assert.match(ssl, /sh "\$\{installer_file\}" "\$\{installer_args\[@\]\}"/);
+
+  // 安装器返回 0 也要验证脚本真的落地
+  assert.match(ssl, /if \[\[ ! -x "\$\{HOME\}\/\.acme\.sh\/acme\.sh" \]\]; then\s*\n\s*print_error/);
+
+  for (const lang of ["zh", "en"]) {
+    const data = JSON.parse(read(`i18n/${lang}.json`));
+    assert.ok(data.ssl.install.fail_verify.length > 0);
+  }
+});
+

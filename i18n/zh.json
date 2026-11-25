@@ -453,7 +453,8 @@
       "start": "正在安装 acme.sh...",
       "fail_download": "acme.sh 安装失败。",
       "fail_autoupgrade": "acme.sh 自动升级设置失败。",
-      "fail_set_ca": "设置默认 CA 失败。"
+      "fail_set_ca": "设置默认 CA 失败。",
+      "fail_verify": "acme.sh 安装后校验失败：安装器返回成功，但脚本文件未落地。"
     },
     "update": {
       "start": "正在更新 acme.sh...",

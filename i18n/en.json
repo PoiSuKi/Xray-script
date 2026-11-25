@@ -453,7 +453,8 @@
       "start": "Installing acme.sh...",
       "fail_download": "Failed to install acme.sh.",
       "fail_autoupgrade": "Failed to set acme.sh auto-upgrade.",
-      "fail_set_ca": "Failed to set default CA."
+      "fail_set_ca": "Failed to set default CA.",
+      "fail_verify": "acme.sh verification failed: the installer reported success but the script file is missing."
     },
     "update": {
       "start": "Updating acme.sh...",
