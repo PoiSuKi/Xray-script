@@ -221,7 +221,7 @@ rules[]   [ {type:"field", ...}, {type:"field", ip:["geoip:private"], outboundTa
 ## 7. 验证方式（接手人怎么复现）
 
 ```powershell
-# 契约测试（50 条，纯源码文本断言；cwd 必须是项目根）
+# 契约测试（52 条，纯源码文本断言；cwd 必须是项目根）
 & "C:\Program Files\nodejs\node.exe" tests\installer-contract.test.js
 
 # 静态检查（0 error 是基线）
@@ -354,6 +354,30 @@ rules[]   [ {type:"field", ...}, {type:"field", ip:["geoip:private"], outboundTa
 | `final-independent-review-round3.txt` | 第 3 轮：结论"可发布"，39/39；仅剩 Low/Info（`persist` 未检查、REALITY 双写非原子、pin 重复、SNI CDN 强制为有意变更） |
 | `xray-install-compat.patch` | 旧思路补丁（`-u root` → `--no-update-service`），现已被 `b344f40` 的"钉死 commit + SHA256 + `bash -s --`"方案取代，仅作历史留档 |
 
+### 9.3 第四轮：CDN-XHTTP 真实域名全链路（`cc20.2poi.org`，Cloudflare 橙云）
+
+真机条件：Debian 12 + 真实域名解析到 Cloudflare 边缘（橙云代理）、源站 80/443 可达。
+
+跑通的链路：`--script-config CDNXHTTP` → `--xray-config` → `--cdn-xhttp-install`。结束后 nginx 接管 80/443（`http2 on`），Xray 只监听 `/run/xray-script/xray/cdn_xhttp.sock,0660`（属主 `xray:xray`），秘密路径 `location ^~ <path>` 用 `grpc_pass unix:` 转发；`sites-enabled` 为软链，`conf.d/cdn-xhttp-default.conf` 提供 `ssl_reject_handshake` 兜底。
+
+可访问性：源站本机 `curl --resolve` 首页 200、裸 `GET/POST <path>` 400（Xray 对不符合 XHTTP 握手的请求的正常拒绝）；经由 Cloudflare 外部访问首页 200、`<path>` 400 —— 说明 CF → 源站 443 → UDS 全段连通。
+
+端到端客户端验证：用 Xray 26.10.31 客户端按 `--share` 输出建 socks 入口（`xhttp` + `tls` + `mode=packet-up` + `alpn=h2` + `host`），`curl --socks5-hostname 127.0.0.1:10809 https://api.ipify.org` 返回目标服务器公网 IP，访问站点首页 200，确认「客户端 → Cloudflare → nginx → UDS → Xray → 目标站」整链可用。
+
+过程中修掉两个真实缺陷：
+
+1. **ZeroSSL 账户从未注册，证书申请必然失败（高）**
+   首次 `--cdn-xhttp-install` 停在 `acme.sh is using ZeroSSL as default CA now.` + `acme.sh --register-account -m my@example.com`：`install_acme_sh` 与 `issue_certificate` 都没把 `.nginx.ca` 的邮箱用于注册账户，acme.sh 自带的兜底邮箱在 ZeroSSL 上会被拒绝，脚本只能报 `ECC 证书申请失败`。
+   修法：`service/ssl.sh` 新增 `ensure_ca_account()`，在 `issue_certificate` 里 `resolve_ca_server` 之后、下单之前执行 `acme.sh --register-account --server zerossl [-m <邮箱>]`（同一账户重复注册返回 0，可安全重跑）；i18n 新增 `.ssl.account.start` / `.ssl.account.fail`。
+   靶机验证：删掉 `~/.acme.sh/ca/acme.zerossl.com` 与证书目录后重跑，日志出现「正在注册 CA 账户...」→ `Pending (2/30)` → `Cert success`，41 秒拿到 ZeroSSL 证书（`issuer ... ZeroSSL ECC DV SSL CA 2`），HTTP-01 穿过 Cloudflare 橙云成功。
+
+2. **CDN-XHTTP 安装不自己写 Xray 配置，失败回滚会把配置改回上一个协议（中）**
+   复现：Xray 配置还是 Vision 时直接跑 `--cdn-xhttp-install`，会在 `handler_restart || wait_cdn_xhttp_socket` 处报「Xray 启动失败，已恢复原配置」——因为重启后 Xray 监听 443/tcp，永远不会有 UDS；随后的 `restore_cdn_xhttp_install_failure` 又把配置恢复成 Vision 并删掉 `.cdn-xhttp-transaction.bak`，越重跑越难自愈。
+   修法：进入安装前校验 `.xray.tag == CDNXHTTP`（否则明确报错退出），并检查 `xray/config.json` 里是否存在 `startswith($socket)` 的入站；不匹配时先调 `handler_xray_config` 按模板重写（i18n 新增 `.handler.cdn_xhttp.mode_required` / `.config_rewrite`），再继续安装。
+   靶机验证：把 Xray 配置改回 Vision 后直接跑 `--cdn-xhttp-install`，输出「检测到 Xray 配置不是 CDN-XHTTP 模式，正在重新写入配置」，安装成功、socket 就位、无事务残留。
+
+契约测试随之补两条（共 52 条）：`CDN-XHTTP installation repairs a mismatched Xray configuration`、`certificate issuance registers the CA account before ordering`。
+
 ---
 
 ## 10. 建议的后续路线（按性价比排序）
@@ -363,8 +387,8 @@ rules[]   [ {type:"field", ...}, {type:"field", ip:["geoip:private"], outboundTa
 3. **Cloudreve 加固**（P2-7）：钉镜像版本、`6888` 绑回环。
 4. **加 CI**（`.github/workflows/ci.yml`）：`shellcheck -S warning` + `node tests/installer-contract.test.js` + `bash -n`（runner 是 Linux，天然可跑）。
 5. **决定是否接入上游**：加 `upstream = zxcvos/Xray-script` 并定期 rebase；当前 fork 已经把 handler 改得面目全非，直接 merge 大概率冲突，建议"只 cherry-pick 明确修复"。
-6. ~~**发版**~~：`config.json.version` 已提到 `v2026.11.25`，中英 README changelog 第 14 条。
-7. **SNI / CDN-XHTTP 全链路仍未实机验证**：这两条路径需要真实域名 + 证书（acme HTTP-01 要 80/443 可达的域名）。当前只验证到"nginx 源码编译可跑、缺域名时按预期报错"，真实签发与分流仍需一台有域名的机器补测。
+6. ~~**发版**~~：`config.json.version` 已提到 `v2026.11.27`，中英 README changelog 第 15 条。
+7. ~~**CDN-XHTTP 全链路实机验证**~~：已在真实域名 `cc20.2poi.org`（Cloudflare 橙云）跑通，见 9.3。**SNI 分流（协议 6）仍未实机验证**：需要第二个域名 + 证书，且要求 REALITY 直连与 CDN 两条腿可分别连通。
 
 ---
 
