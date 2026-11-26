@@ -831,4 +831,43 @@ test("purge removes the runtime socket directory", () => {
   assert.match(body, /if ! systemctl -q is-active nginx; then\s*\n\s*rm -rf -- "\$\{NGINX_RUNTIME_DIR\}"/);
 });
 
+test("CDN-XHTTP installation repairs a mismatched Xray configuration", () => {
+  const handler = read("core/handler.sh");
+  const install = functionBody(handler, "handler_cdn_xhttp_install");
+
+  // 配置若仍是上一个协议，重启后 Xray 不会建立 Unix Socket，
+  // 后续等待 socket 必然超时，因此安装前必须按模板重写配置
+  assert.match(install, /\.xray\.tag \/\/ empty/);
+  assert.match(install, /any\(\.inbounds\[\]\?; \(\.listen \/\/ ""\) \| tostring \| startswith\(\$socket\)\)/);
+  // 重写配置必须发生在重启 Xray 之前，否则 socket 永远不会就绪
+  const rewriteAt = install.indexOf("handler_xray_config || return 1");
+  assert.ok(rewriteAt > 0);
+  assert.ok(rewriteAt < install.indexOf("handler_restart"));
+
+  for (const lang of ["zh", "en"]) {
+    const data = JSON.parse(read(`i18n/${lang}.json`));
+    assert.ok(data.handler.cdn_xhttp.mode_required.length > 0);
+    assert.ok(data.handler.cdn_xhttp.config_rewrite.length > 0);
+  }
+});
+
+test("certificate issuance registers the CA account before ordering", () => {
+  const ssl = read("service/ssl.sh");
+  const issue = functionBody(ssl, "issue_certificate");
+
+  assert.match(ssl, /function ensure_ca_account\(\) \{/);
+  // ZeroSSL 需要先用真实邮箱注册账户，acme.sh 的兜底邮箱会被拒绝
+  assert.match(ssl, /local -a register_args=\(--register-account --server "\$\{CA_SERVER\}"\)/);
+  assert.match(ssl, /register_args\+=\(-m "\$\{ACCOUNT_EMAIL\}"\)/);
+  assert.match(ssl, /\[\[ "\$\{CA_SERVER\}" == 'zerossl' \]\] \|\| return 0/);
+  assert.ok(issue.indexOf("ensure_ca_account") > 0);
+  assert.ok(issue.indexOf("ensure_ca_account") < issue.indexOf('acme.sh" "${issue_args'));
+
+  for (const lang of ["zh", "en"]) {
+    const data = JSON.parse(read(`i18n/${lang}.json`));
+    assert.ok(data.ssl.account.start.length > 0);
+    assert.ok(data.ssl.account.fail.length > 0);
+  }
+});
+
 

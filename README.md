@@ -69,6 +69,7 @@
 12. v2026.11.09 版本新增 CDN-XHTTP 安装模式：Nginx 终止 TLS、提供静态伪装站，并通过 Unix Socket 将秘密路径转发至 Xray XHTTP `packet-up`；证书使用 acme.sh HTTP-01 webroot 签发，不依赖 Cloudflare API Token，同时完善切换模式和卸载清理。
 13. v2026.11.09-r1 版本修复全新系统缺少 `/var/www` 父目录时，CDN-XHTTP 伪装站点复制失败的问题。
 14. v2026.11.25 版本修复三项配置写入可靠性问题：REALITY 域名与 target 改为必填并做域名/端口/重定向校验，避免写出 `:443` 这类非法 target；所有 `config.json` 落盘统一走原子写入并对失败返回错误，不再静默丢弃；REALITY 域名修改改为先备份、`xray -test` 校验、原子替换、重启后校验服务状态，失败自动回滚。
+15. v2026.11.27 版本修复 CDN-XHTTP 真实域名全链路暴露的问题：acme.sh 在账户邮箱为空时安装失败（安装器失败仍返回 0），改为仅在有邮箱时传参并在安装后校验 `acme.sh` 是否落地；签发前用配置邮箱幂等注册 ZeroSSL 账户，否则证书申请只会在日志里提示手动 `--register-account`；CDN-XHTTP 安装前校验 Xray 配置，发现仍是上一个协议时自动按模板重写，避免重启后等不到 Unix Socket 并回滚成旧配置；`--purge` 一并清理 `/run/xray-script` 运行期目录。
 
 ## 分享链接
 

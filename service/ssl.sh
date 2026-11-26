@@ -285,6 +285,34 @@ function install_acme_sh() {
 }
 
 # =============================================================================
+# 函数名称: ensure_ca_account
+# 功能描述: 在签发前幂等注册 ACME 账户。
+#           ZeroSSL 要求先用邮箱注册账户；acme.sh 自带的兜底邮箱 my@example.com
+#           会被拒绝，签发时只会在输出里提示手动执行 --register-account，
+#           证书申请因此必然失败。同一个账户重复注册仍返回 0，可以安全重跑。
+# 参数: 无 (使用全局变量 ACCOUNT_EMAIL、CA_SERVER)
+# 返回值: 无 (注册成功或失败后退出)
+# =============================================================================
+function ensure_ca_account() {
+    local register_output=''
+    local -a register_args=(--register-account --server "${CA_SERVER}")
+
+    # 只有 ZeroSSL 需要预先注册；Let's Encrypt 在签发时自动注册账户
+    [[ "${CA_SERVER}" == 'zerossl' ]] || return 0
+    [[ -x "${HOME}/.acme.sh/acme.sh" ]] || return 0
+
+    print_info "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.account.start")"
+
+    if [[ -n "${ACCOUNT_EMAIL}" ]]; then
+        register_args+=(-m "${ACCOUNT_EMAIL}")
+    fi
+    register_output="$("${HOME}/.acme.sh/acme.sh" "${register_args[@]}" 2>&1)" || {
+        [[ -n "${register_output}" ]] && printf "%s\n" "${register_output}" >&2
+        print_error "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.account.fail")"
+    }
+}
+
+# =============================================================================
 # 函数名称: update_acme_sh
 # 功能描述: 更新 acme.sh 脚本。
 # 参数: 无
@@ -337,6 +365,8 @@ function issue_certificate() {
     # 定义证书存储路径
     local cert_path="${SSL_CERT_PATH}/${DOMAIN}"
     resolve_ca_server
+    # 签发前先确保 CA 账户已注册（ZeroSSL 未注册时申请必然失败）
+    ensure_ca_account
 
     # 打印签发信息
     print_info "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.issue.start")"

@@ -204,6 +204,8 @@
     },
     "cdn_xhttp": {
       "port_guard_fail": "CDN-XHTTP initialization stopped: required port check failed",
+      "mode_required": "The script configuration is not in CDN-XHTTP mode; installation aborted",
+      "config_rewrite": "The Xray configuration is not in CDN-XHTTP mode; rewriting it now",
       "nginx_required": "CDN-XHTTP requires the managed Nginx v1.25.1 or newer",
       "nginx_http2_missing": "The installed Nginx lacks http_v2_module and cannot forward XHTTP",
       "cert_missing": "The certificate files are incomplete; reinstall CDN-XHTTP",
@@ -465,6 +467,10 @@
       "fail_disable_autoupgrade": "Failed to disable acme.sh auto-upgrade.",
       "fail_uninstall_cmd": "acme.sh uninstall command failed.",
       "success": "acme.sh and related directories have been deleted."
+    },
+    "account": {
+      "start": "Registering the CA account...",
+      "fail": "Failed to register the CA account; check the email address or retry later."
     },
     "issue": {
       "no_domain": "No domain specified, cannot apply for certificate.",

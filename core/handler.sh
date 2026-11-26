@@ -2721,6 +2721,18 @@ function handler_cdn_xhttp_install() {
     local nginx_version=''
 
     [[ -n "${domain}" && -n "${xhttp_path}" ]] || return 1
+    # 安装流程依赖 Xray 已按 CDNXHTTP 模板写入配置：配置若仍是上一个协议
+    # （例如上次安装失败被回滚），重启后 Xray 会监听公网端口而不是 Unix Socket，
+    # 后面的 wait_cdn_xhttp_socket 必然超时，所以这里先自愈。
+    if [[ "$(echo "${SCRIPT_CONFIG}" | jq -r '.xray.tag // empty' | tr '[:upper:]' '[:lower:]')" != 'cdnxhttp' ]]; then
+        _error "$(echo "$I18N_DATA" | jq -r '.handler.cdn_xhttp.mode_required')"
+    fi
+    if ! jq -e --arg socket "${CDN_XHTTP_SOCKET}" \
+        'any(.inbounds[]?; (.listen // "") | tostring | startswith($socket))' \
+        "${XRAY_CONFIG_PATH}" >/dev/null 2>&1; then
+        echo -e "${GREEN}[$(echo "$I18N_DATA" | jq -r '.title.config')]${NC} $(echo "$I18N_DATA" | jq -r '.handler.cdn_xhttp.config_rewrite')" >&2
+        handler_xray_config || return 1
+    fi
     handler_nginx_install || return 1
     handler_ssl_install || return 1
     if cmd_exists 'docker'; then

@@ -204,6 +204,8 @@
     },
     "cdn_xhttp": {
       "port_guard_fail": "CDN-XHTTP 初始化已停止：必需端口检查未通过",
+      "mode_required": "当前脚本配置不是 CDN-XHTTP 模式，无法安装",
+      "config_rewrite": "检测到 Xray 配置不是 CDN-XHTTP 模式，正在重新写入配置",
       "nginx_required": "CDN-XHTTP 需要脚本管理的 Nginx v1.25.1 或更高版本",
       "nginx_http2_missing": "当前 Nginx 缺少 http_v2_module，无法转发 XHTTP",
       "cert_missing": "证书文件不完整，请重新安装 CDN-XHTTP",
@@ -465,6 +467,10 @@
       "fail_disable_autoupgrade": "禁用 acme.sh 自动升级失败。",
       "fail_uninstall_cmd": "acme.sh 卸载命令执行失败。",
       "success": "acme.sh 及相关目录已删除。"
+    },
+    "account": {
+      "start": "正在注册 CA 账户...",
+      "fail": "CA 账户注册失败，请检查邮箱是否正确，或稍后重试。"
     },
     "issue": {
       "no_domain": "未指定域名，无法申请证书。",
