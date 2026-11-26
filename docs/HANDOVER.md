@@ -150,7 +150,7 @@ install.sh                       # 引导：依赖/下载/版本/语言 → 交�
 ### 5.1 `~/.xray-script/config.json`
 
 ```
-version   脚本自身版本（v2026.11.09-r1），自更新对比用
+version   脚本自身版本（当前 v2026.11.27），自更新对比用
 path      PROJECT_ROOT（安装目录），install.sh 据此定位
 language  zh | en | auto
 xray      version / warp(0|1) / tag / port / uuid / fallback / trojan / kcp / path
@@ -380,6 +380,26 @@ rules[]   [ {type:"field", ...}, {type:"field", ip:["geoip:private"], outboundTa
 
 ---
 
+## 9.4 第四轮之后的独立审核（小队「代码审核」/只读）
+
+审核范围 `git diff c52d1a8..HEAD`（7 个提交），结论 **可以发布：无 blocker、无 major**。随后按 minor 逐项落地：
+
+| 审核意见 | 处理 |
+| --- | --- |
+| `ensure_ca_account` 在 acme.sh 缺失时静默 `return 0`，签发阶段才以 acme 原始输出失败 | 已改为 `print_error .ssl.install.fail_verify`，让报错指向根因 |
+| 四个原子写 helper 的临时文件先按 umask 创建（root 常见 0644），`chmod 0600` 之前 REALITY 私钥有短暂可读窗口 | 已统一 `( umask 077; printf ... >"${temp_path}" )`，临时文件从创建起即 0600 |
+| `handler_purge` 里 `rmdir /run/xray-script` 硬编码，与 `XRAY_RUNTIME_DIR` 派生关系脱节 | 已改为 `$(dirname "${XRAY_RUNTIME_DIR}")`，并补契约断言 |
+| 契约测试的正则不排除注释行，把断言对象注释掉仍能通过 | 新增 `stripComments()`，9 条新增断言全部改在去注释文本上判断 |
+| 直接重定向检测只认 `echo "${SCRIPT_CONFIG}" >`，`printf`/`>>`/`tee` 变体漏网 | 已改为匹配任意 `>>?`/`tee` 指向 `${SCRIPT_CONFIG_PATH}` 的行 |
+| `HANDOVER.md` 的 `config.json` 字段说明仍写旧版本号 | 已更新为 `v2026.11.27` |
+| `handler_ca_server` 在 persist 失败时已重签证书但不回滚 | 记录在案，未改（失败路径会以 `_error` 明确退出，属于"响亮失败"，回滚证书需再走一遍签发，留作后续） |
+| 四个脚本各自持有一份等价的原子写实现，存在漂移风险 | 记录在案，未改（抽公共 lib 会改动 4 个入口的加载顺序，性价比低于当前收益） |
+| `handler_change_reality_domain` 的 `capture` 对 IPv6 形式的旧 target 会退化成默认端口 443 | 记录在案（REALITY target 实际只会是域名，IPv6 场景不存在） |
+
+审核同时确认：jq 参数全部走 `--arg`/`--argjson` 无注入；安装器邮箱以单 argv 传入无法注入额外参数；`rm -rf` 目标均为常量且带 `--`；新增的 `|| _error` 都在主 shell 内属有意的致命路径。
+
+---
+
 ## 10. 建议的后续路线（按性价比排序）
 
 1. ~~**修 P1-1 / P1-2 / P1-3**~~：已在 `0864a9c` 完成（48 条测试全绿）。
@@ -389,6 +409,9 @@ rules[]   [ {type:"field", ...}, {type:"field", ip:["geoip:private"], outboundTa
 5. **决定是否接入上游**：加 `upstream = zxcvos/Xray-script` 并定期 rebase；当前 fork 已经把 handler 改得面目全非，直接 merge 大概率冲突，建议"只 cherry-pick 明确修复"。
 6. ~~**发版**~~：`config.json.version` 已提到 `v2026.11.27`，中英 README changelog 第 15 条。
 7. ~~**CDN-XHTTP 全链路实机验证**~~：已在真实域名 `cc20.2poi.org`（Cloudflare 橙云）跑通，见 9.3。**SNI 分流（协议 6）仍未实机验证**：需要第二个域名 + 证书，且要求 REALITY 直连与 CDN 两条腿可分别连通。
+8. **收敛原子写实现**：`persist_script_config` / `save_script_config` / 两份 `write_script_config` 是同一逻辑的四份拷贝，已开始漂移（前两者缺空内容前置检查），建议抽到 `core/lib.sh` 之类的共享文件。
+9. **`handler_ca_server` 的 persist 失败回滚**：目前重签证书成功但 persist 失败会直接退出，磁盘上"证书新、配置旧"，可按 `current_ca_server` 再签一次回滚。
+10. **Cloudreve v4 compose 版本钉死**（同上第 3 条），以及 v4 的 `6888` 端口绑回环。
 
 ---
 

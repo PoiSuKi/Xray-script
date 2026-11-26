@@ -153,7 +153,8 @@ function write_script_config() {
     if [[ -z "${content}" ]]; then
         return 1
     fi
-    printf '%s\n' "${content}" >"${temp_path}" || {
+    # umask 077：临时文件从创建起就是 0600，避免 REALITY 私钥在 chmod 之前短暂可读
+    ( umask 077; printf '%s\n' "${content}" >"${temp_path}" ) || {
         rm -f "${temp_path}"
         return 1
     }
@@ -299,7 +300,11 @@ function ensure_ca_account() {
 
     # 只有 ZeroSSL 需要预先注册；Let's Encrypt 在签发时自动注册账户
     [[ "${CA_SERVER}" == 'zerossl' ]] || return 0
-    [[ -x "${HOME}/.acme.sh/acme.sh" ]] || return 0
+    # acme.sh 缺失说明上游安装环节出了问题，这里直接报错，避免签发阶段
+    # 只抛出一段看不懂的 acme 原始输出
+    if [[ ! -x "${HOME}/.acme.sh/acme.sh" ]]; then
+        print_error "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.install.fail_verify")"
+    fi
 
     print_info "$(echo "$I18N_DATA" | jq -r ".${CUR_FILE}.account.start")"
 

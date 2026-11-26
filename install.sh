@@ -478,7 +478,8 @@ function write_script_config() {
     if [[ -z "${content}" ]]; then
         return 1
     fi
-    printf '%s\n' "${content}" >"${temp_path}" || {
+    # umask 077：临时文件从创建起就是 0600，避免 REALITY 私钥在 chmod 之前短暂可读
+    ( umask 077; printf '%s\n' "${content}" >"${temp_path}" ) || {
         rm -f "${temp_path}"
         return 1
     }

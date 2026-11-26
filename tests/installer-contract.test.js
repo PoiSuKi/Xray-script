@@ -708,8 +708,16 @@ test("failed multi-step handlers roll back pending script transactions", () => {
   assert.match(handler, /--rollback-script-config\) rollback_script_config_transaction/);
 });
 
+// 去掉整行注释，避免“把某行注释掉”也能满足正向断言造成假绿
+function stripComments(source) {
+  return source
+    .split("\n")
+    .filter((line) => !/^\s*#/.test(line))
+    .join("\n");
+}
+
 test("REALITY target and domain inputs require a validated domain", () => {
-  const handler = read("core/handler.sh");
+  const handler = stripComments(read("core/handler.sh"));
   const zh = JSON.parse(read("i18n/zh.json"));
   const en = JSON.parse(read("i18n/en.json"));
 
@@ -728,12 +736,12 @@ test("REALITY target and domain inputs require a validated domain", () => {
 });
 
 test("every script config write goes through the atomic helper", () => {
-  const handler = read("core/handler.sh");
+  const handler = stripComments(read("core/handler.sh"));
   const persist = functionBody(handler, "persist_script_config");
 
   assert.match(persist, /mv -f "\$\{temp_path\}" "\$\{SCRIPT_CONFIG_PATH\}"/);
   // 唯一允许的直接覆盖是 REALITY 域名回滚时还原上一份已验证配置
-  const directWrites = handler.match(/[^\n]*>"\$\{SCRIPT_CONFIG_PATH\}"/g) || [];
+  const directWrites = handler.split("\n").filter((line) => /(?:>>?|\btee\b).*"\$\{SCRIPT_CONFIG_PATH\}"/.test(line));
   assert.equal(directWrites.length, 1, `unexpected direct config writes: ${directWrites}`);
   assert.match(directWrites[0], /cat "\$\{script_backup\}"/);
 
@@ -757,13 +765,12 @@ test("every script config write goes through the atomic helper", () => {
     ["install.sh", "write_script_config"],
   ];
   for (const [name, helper] of others) {
-    const source = read(name);
+    const source = stripComments(read(name));
     assert.match(source, new RegExp(`function ${helper}\\(\\)`), `${name} missing ${helper}`);
-    assert.doesNotMatch(
-      source,
-      /echo "\$\{SCRIPT_CONFIG\}" >"\$\{SCRIPT_CONFIG_PATH\}"/,
-      `${name} still writes the config through a shell redirect`,
-    );
+    const redirects = source
+      .split("\n")
+      .filter((line) => /(?:>>?|\btee\b).*"\$\{SCRIPT_CONFIG_PATH\}"/.test(line));
+    assert.deepEqual(redirects, [], `${name} still writes the config through a shell redirect`);
     assert.doesNotMatch(source, /sleep 2\n\s*\$/, `${name} still sleeps after a config write`);
   }
 });
@@ -804,7 +811,7 @@ test("Chinese and English i18n key sets stay in sync", () => {
 });
 
 test("acme.sh install survives an empty account email", () => {
-  const ssl = read("service/ssl.sh");
+  const ssl = stripComments(read("service/ssl.sh"));
 
   // get.acme.sh 收到空的 email= 会在安装器内部失败，且退出码仍为 0
   assert.ok(!/sh "\$\{installer_file\}" email=/.test(ssl));
@@ -822,17 +829,19 @@ test("acme.sh install survives an empty account email", () => {
 });
 
 test("purge removes the runtime socket directory", () => {
-  const handler = read("core/handler.sh");
+  const handler = stripComments(read("core/handler.sh"));
   const purge = handler.slice(handler.indexOf("function handler_purge()"));
   const body = purge.slice(0, purge.indexOf("\nfunction handler_start()"));
 
   assert.match(body, /rm -rf -- "\$\{XRAY_RUNTIME_DIR\}"/);
   // nginx 仍在运行时不能顺手删掉它的 socket 目录
   assert.match(body, /if ! systemctl -q is-active nginx; then\s*\n\s*rm -rf -- "\$\{NGINX_RUNTIME_DIR\}"/);
+  // 运行期目录的基址由变量派生，避免以后调整路径时漏改
+  assert.match(body, /rmdir --ignore-fail-on-non-empty "\$\(dirname "\$\{XRAY_RUNTIME_DIR\}"\)"/);
 });
 
 test("CDN-XHTTP installation repairs a mismatched Xray configuration", () => {
-  const handler = read("core/handler.sh");
+  const handler = stripComments(read("core/handler.sh"));
   const install = functionBody(handler, "handler_cdn_xhttp_install");
 
   // 配置若仍是上一个协议，重启后 Xray 不会建立 Unix Socket，
@@ -852,7 +861,7 @@ test("CDN-XHTTP installation repairs a mismatched Xray configuration", () => {
 });
 
 test("certificate issuance registers the CA account before ordering", () => {
-  const ssl = read("service/ssl.sh");
+  const ssl = stripComments(read("service/ssl.sh"));
   const issue = functionBody(ssl, "issue_certificate");
 
   assert.match(ssl, /function ensure_ca_account\(\) \{/);

@@ -393,7 +393,8 @@ function reset_json_fields() {
 function persist_script_config() {
     local temp_path="${SCRIPT_CONFIG_PATH}.tmp.$$"
 
-    printf '%s\n' "${SCRIPT_CONFIG}" >"${temp_path}" || {
+    # umask 077：临时文件从创建起就是 0600，避免 REALITY 私钥在 chmod 之前短暂可读
+    ( umask 077; printf '%s\n' "${SCRIPT_CONFIG}" >"${temp_path}" ) || {
         rm -f "${temp_path}"
         return 1
     }
@@ -2154,7 +2155,7 @@ function handler_purge() {
     if ! systemctl -q is-active nginx; then
         rm -rf -- "${NGINX_RUNTIME_DIR}" || true
     fi
-    rmdir --ignore-fail-on-non-empty /run/xray-script 2>/dev/null || true
+    rmdir --ignore-fail-on-non-empty "$(dirname "${XRAY_RUNTIME_DIR}")" 2>/dev/null || true
 }
 
 # =============================================================================
